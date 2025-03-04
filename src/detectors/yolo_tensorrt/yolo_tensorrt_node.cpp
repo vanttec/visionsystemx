@@ -7,9 +7,57 @@
 #include "cv_bridge/cv_bridge.h"
 #include "opencv2/opencv.hpp"
 
-#include "tensorrt.hpp"
+#include "yolo_tensorrt.hpp"
 
 using std::placeholders::_1;
+
+const std::vector<std::string> NAMES {
+	"black_buoy",
+	"blue_bbuoy",
+	"course_marker",
+	"green_buoy",
+	"port_marker",
+	"red_buoy",
+	"starboard_marker",
+	"yellow_marker",
+	"ducks",
+	"blue_cross",
+	"red_circle",
+	"red_triangle",
+	"green_cross",
+	"blue_triangle",
+	"green_square",
+	"red_cross",
+	"green_circle",
+	"red_square",
+	"green_triangle",
+	"blue_circle",
+	"blue_square"
+};
+
+const std::vector<std::vector<unsigned int>> COLORS {
+	{0, 0, 0},
+	{0, 0, 0},
+	{0, 0, 0},
+	{0, 0, 0},
+	{0, 0, 0},
+	{0, 0, 0},
+	{0, 0, 0},
+	{0, 0, 0},
+	{0, 0, 0},
+	{0, 0, 0},
+	{0, 0, 0},
+	{0, 0, 0},
+	{0, 0, 0},
+	{0, 0, 0},
+	{0, 0, 0},
+	{0, 0, 0},
+	{0, 0, 0},
+	{0, 0, 0},
+	{0, 0, 0},
+	{0, 0, 0},
+	{0, 0, 0}
+};
 
 template <typename E>
 class YoloDetector: public rclcpp::Node {
@@ -20,12 +68,14 @@ private:
 	std::string		engine_path;
 	std::string		video_topic;
 	std::string		output_topic;
+	std::string		output_image_topic;
 	double			threshold;
 
 	E*			detector_engine;
 
 	std::shared_ptr<image_transport::ImageTransport> it;
 	std::shared_ptr<image_transport::Subscriber> is;
+	std::shared_ptr<image_transport::Publisher> idp;
 	std::shared_ptr<rclcpp::Publisher<usv_interfaces::msg::ZbboxArray>> dets;
 
 
@@ -48,6 +98,14 @@ void frame(const sensor_msgs::msg::Image::ConstSharedPtr & msg)
 	this->dets->publish( objs );
 
 	RCLCPP_INFO(this->get_logger(), "--> inference done [%ld]", objs.boxes.size());
+
+	detector_engine->draw_objects(img, img, objs, NAMES, COLORS);
+
+	std_msgs::msg::Header hdr;
+	sensor_msgs::msg::Image::SharedPtr detmsg = cv_bridge::CvImage(hdr, "bgr8", img).toImageMsg();
+	detmsg->header.stamp = this->get_clock()->now();
+
+	this->idp->publish( detmsg );
 }
 
 public:
@@ -61,6 +119,9 @@ public:
 
 		this->declare_parameter("output_topic", "/yolo/detections");
 		output_topic = this->get_parameter("output_topic").as_string();
+
+		this->declare_parameter("output_image_topic", "/yolo/detections/image");
+		output_image_topic = this->get_parameter("output_image_topic").as_string();
 
 		this->declare_parameter("threshold", 0.6);
 		threshold = this->get_parameter("threshold").as_double();
@@ -82,6 +143,13 @@ public:
 				video_topic,
 				10,
 				std::bind(&YoloDetector::frame, this, std::placeholders::_1)
+			)
+		);
+
+		this->idp = std::make_shared<image_transport::Publisher>(
+			it->advertise(
+				output_image_topic,
+				5
 			)
 		);
 

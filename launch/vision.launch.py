@@ -23,15 +23,21 @@ def generate_launch_description():
             name='yolo',
             output='screen',
             parameters=[
-                {'engine_path': '/home/vanttec/vanttec_usv/DOCKINGv5.engine'},
+                # {'engine_path': '/home/vanttec/vanttec_usv/RB2025v1.engine'},
+                {'engine_path': '/home/vanttec/vanttec_usv/RB2024v2.engine'},
                 {'video_topic': '/bebblebrox/video'},
                 {'output_topic': '/shapes/detections'},
-                {'threshold': 0.4},
+                {'threshold': 0.1},
             ],
 
             # ros debug printing
             #arguments=['--ros-args', '--log-level', 'DEBUG']
 
         ),
+
+        Node(
+            package="rviz2",
+            executable="rviz2"
+        )
 
     ])
