@@ -1,6 +1,7 @@
 #include "rclcpp/rclcpp.hpp"
 #include "image_transport/image_transport.hpp"
 
+#include "sensor_msgs/msg/image.hpp"
 #include "usv_interfaces/msg/zbbox_array.hpp"
 #include "usv_interfaces/msg/zbbox.hpp"
 
@@ -60,117 +61,123 @@ const std::vector<std::vector<unsigned int>> COLORS {
 };
 
 template <typename E>
-class YoloDetector: public rclcpp::Node {
-
+class YoloDetector : public rclcpp::Node {
 private:
-	cv::Size		size        = cv::Size{640, 640};
+    cv::Size size = cv::Size{640, 640};
 
-	std::string		engine_path;
-	std::string		video_topic;
-	std::string		output_topic;
-	std::string		output_image_topic;
-	double			threshold;
+    std::string engine_path;
+    std::string video_topic;
+    std::string output_topic;
+    double threshold;
 
-	E*			detector_engine;
+    std::unique_ptr<E> detector_engine;
 
-	std::shared_ptr<image_transport::ImageTransport> it;
-	std::shared_ptr<image_transport::Subscriber> is;
-	std::shared_ptr<image_transport::Publisher> idp;
-	std::shared_ptr<rclcpp::Publisher<usv_interfaces::msg::ZbboxArray>> dets;
+    // Image transport objects
+    std::shared_ptr<image_transport::ImageTransport> it;
+    std::shared_ptr<image_transport::Subscriber> is;
+    image_transport::Publisher draw_pub;  // Publisher for the drawn image
 
+    // Publisher for detections
+    std::shared_ptr<rclcpp::Publisher<usv_interfaces::msg::ZbboxArray>> dets;
 
-	// rclcpp::Publisher<usv_interfaces::msg::ZbboxArray>::SharedPtr dets;
+    void frame(const sensor_msgs::msg::Image::ConstSharedPtr &msg)
+    {
+        try {
+            // Convert incoming ROS image to OpenCV image
+            auto cv_ptr = cv_bridge::toCvCopy(msg, "bgr8");
+            cv::Mat img = cv_ptr->image;
 
+            // Run inference using YOLOv8
+            detector_engine->copy_from_Mat(img, size);
+            detector_engine->infer();
 
+            // Get detection results
+            usv_interfaces::msg::ZbboxArray objs = detector_engine->postprocess();
+            objs.header.stamp = this->now();
 
-void frame(const sensor_msgs::msg::Image::ConstSharedPtr & msg)
-{
-	auto img = cv_bridge::toCvCopy(msg, "bgr8")->image;
+            // Publish detections
+            this->dets->publish(objs);
+            RCLCPP_INFO(this->get_logger(), "--> inference done [%ld detections]", objs.boxes.size());
 
-	detector_engine->copy_from_Mat(img, size);
-	detector_engine->infer();
-	
-	usv_interfaces::msg::ZbboxArray objs;
-	objs = detector_engine->postprocess();
+            // Draw the detections on the image
+            cv::Mat annotated;
+            detector_engine->draw_objects(img, annotated, objs, NAMES, COLORS);
 
-	objs.header.stamp = this->now();
-
-	this->dets->publish( objs );
-
-	RCLCPP_INFO(this->get_logger(), "--> inference done [%ld]", objs.boxes.size());
-
-	detector_engine->draw_objects(img, img, objs, NAMES, COLORS);
-
-	std_msgs::msg::Header hdr;
-	sensor_msgs::msg::Image::SharedPtr detmsg = cv_bridge::CvImage(hdr, "bgr8", img).toImageMsg();
-	detmsg->header.stamp = this->get_clock()->now();
-
-	this->idp->publish( detmsg );
-}
+            // Convert the annotated image back to a ROS image message
+            auto annotated_msg = cv_bridge::CvImage(msg->header, "bgr8", annotated).toImageMsg();
+            this->draw_pub.publish(annotated_msg);
+        } catch (const std::exception &e) {
+            RCLCPP_ERROR(this->get_logger(), "Error during inference: %s", e.what());
+        }
+    }
 
 public:
-	YoloDetector() : Node("yolo") {
+    YoloDetector() : Node("yolo")
+    {
+        this->declare_parameter("engine_path", "/home/vanttec/vanttec_usv/SARASOTA.engine");
+        engine_path = this->get_parameter("engine_path").as_string();
 
-		this->declare_parameter("engine_path", "/home/vanttec/vanttec_usv/SARASOTA.engine");
-		engine_path = this->get_parameter("engine_path").as_string();
+        this->declare_parameter("video_topic", "/beeblebrox/video");
+        video_topic = this->get_parameter("video_topic").as_string();
 
-		this->declare_parameter("video_topic", "/beeblebrox/video");
-		video_topic = this->get_parameter("video_topic").as_string();
+        this->declare_parameter("output_topic", "/yolo/detections");
+        output_topic = this->get_parameter("output_topic").as_string();
 
-		this->declare_parameter("output_topic", "/yolo/detections");
-		output_topic = this->get_parameter("output_topic").as_string();
+        this->declare_parameter("threshold", 0.1);
+        threshold = this->get_parameter("threshold").as_double();
 
-		this->declare_parameter("output_image_topic", "/yolo/detections/image");
-		output_image_topic = this->get_parameter("output_image_topic").as_string();
+        size = cv::Size{640, 640};
 
-		this->declare_parameter("threshold", 0.6);
-		threshold = this->get_parameter("threshold").as_double();
+        try {
+            detector_engine = std::make_unique<E>(engine_path, threshold, this->get_logger());
+            detector_engine->make_pipe(true);
+        } catch (const std::exception &e) {
+            RCLCPP_ERROR(this->get_logger(), "Failed to initialize YOLO detector: %s", e.what());
+            throw;
+        }
 
-		size = cv::Size{640, 640};
+        // Publisher for detection results
+        this->dets = this->create_publisher<usv_interfaces::msg::ZbboxArray>(output_topic, 10);
+    }
 
-		detector_engine = new YOLOv8(engine_path, threshold, this->get_logger());
-		
-		detector_engine->make_pipe(true);
+    void init() {
+        // Initialize image transport
+        this->it = std::make_shared<image_transport::ImageTransport>(this->shared_from_this());
 
-		this->dets = this->create_publisher<usv_interfaces::msg::ZbboxArray>(output_topic, 10);
-	}
+        // Subscriber to the raw video topic
+        this->is = std::make_shared<image_transport::Subscriber>(
+            it->subscribe(
+                video_topic,
+                10,
+                std::bind(&YoloDetector::frame, this, _1)
+            )
+        );
 
-	void init() {
-		this->it = std::make_shared<image_transport::ImageTransport>(this->shared_from_this());
+        // Advertise the topic for the drawn (annotated) image
+        this->draw_pub = it->advertise("yolo/draw", 10);
 
-		this->is = std::make_shared<image_transport::Subscriber>(
-			it->subscribe(
-				video_topic,
-				10,
-				std::bind(&YoloDetector::frame, this, std::placeholders::_1)
-			)
-		);
-
-		this->idp = std::make_shared<image_transport::Publisher>(
-			it->advertise(
-				output_image_topic,
-				5
-			)
-		);
-
-		RCLCPP_INFO(this->get_logger(), "-> yolo ready");
-	}
-
+        RCLCPP_INFO(this->get_logger(), "-> yolo ready");
+    }
 };
-
 
 int main(int argc, char **argv)
 {
-	cudaSetDevice(0);
+    try {
+        cudaError_t err = cudaSetDevice(0);
+        if (err != cudaSuccess) {
+            std::cerr << "CUDA device selection failed: " << cudaGetErrorString(err) << std::endl;
+            return 1;
+        }
 
-	rclcpp::init(argc, argv);
-
-	auto node = std::make_shared< YoloDetector<YOLOv8> >();
-	node->init();
-
-	rclcpp::spin(node);
-
-	rclcpp::shutdown();
-	
-	return 0;
+        rclcpp::init(argc, argv);
+        auto node = std::make_shared<YoloDetector<YOLOv8>>();
+        node->init();
+        rclcpp::spin(node);
+        rclcpp::shutdown();
+    } catch (const std::exception &e) {
+        std::cerr << "Fatal error: " << e.what() << std::endl;
+        return 1;
+    }
+    
+    return 0;
 }

@@ -27,17 +27,17 @@ def generate_launch_description():
                 {'engine_path': '/home/vanttec/vanttec_usv/RB2024v2.engine'},
                 {'video_topic': '/bebblebrox/video'},
                 {'output_topic': '/shapes/detections'},
-                {'threshold': 0.1},
+                {'threshold': 0.5},
             ],
 
             # ros debug printing
-            #arguments=['--ros-args', '--log-level', 'DEBUG']
+            # arguments=['--ros-args', '--log-level', 'DEBUG']
 
         ),
 
-        Node(
-            package="rviz2",
-            executable="rviz2"
-        )
+#        Node(
+#            package="rqt_gui",
+#            executable="rqt_gui"
+#        )
 
     ])

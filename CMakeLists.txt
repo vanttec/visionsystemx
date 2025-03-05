@@ -6,7 +6,6 @@ set(CMAKE_CUDA_ARCHITECTURES 60 61 62 70 72 75 86)
 set(CMAKE_CUDA_COMPILER /usr/local/cuda/bin/nvcc)
 
 project(visionsystemx LANGUAGES CXX CUDA)
-
 if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   add_compile_options(-Wall -Wextra -Wpedantic)
 endif()
@@ -14,10 +13,8 @@ endif()
 # find dependencies
 find_package(ament_cmake REQUIRED)
 find_package(ament_cmake_python REQUIRED)
-
 find_package(rclcpp REQUIRED)
 find_package(rclpy REQUIRED)
-
 find_package(std_msgs REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(visualization_msgs REQUIRED)
@@ -60,10 +57,11 @@ install(TARGETS
   DESTINATION lib/${PROJECT_NAME}
 )
 
-# install launch and data folders
+# install launch, data, and config folders
 install(DIRECTORY
   launch
   data
+  config
   DESTINATION share/${PROJECT_NAME}/
 )
 

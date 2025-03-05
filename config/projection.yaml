@@ -1,0 +1,49 @@
+lidar:
+  lidar_topic: /velodyne_points
+  frame_id: velodyne
+
+camera:
+  image_topic: /zed_raw
+  projected_topic: /zed_raw/projected
+  image_size:
+    width: 2560
+    height: 720
+  frame_id: camera
+
+chessboard:
+  pattern_size:
+    rows: 12
+    columns: 10
+  square_size_meters: 0.4
+
+general:
+  config_folder: /ros2_ws/src/ros2_camera_lidar_fusion/config
+  data_folder: /ros2_ws/src/ros2_camera_lidar_fusion/data
+  correspondence_file: ros2_camera_lidar_fusion_correspondences.txt
+  camera_intrinsic_calibration: camera_intrinsic_calibration.yaml
+  camera_extrinsic_calibration: camera_extrinsic_calibration.yaml
+  slop: 0.1
+  max_file_saved: 10
+  keyboard_listener: True
+  get_intrinsics: True
+  get_extrinsics: True
+  point_search_radius: 0.1  # 10cm search radius
+  append_correspondences: false  # true to append to existing file
+
+extrinsic_matrix:
+- - 0.004925697387197947
+  - -0.9999744448207916
+  - -0.0051814293973278525
+  - 0.06684500162782157
+- - 0.01300526353504694
+  - 0.00524511394559779
+  - -0.9999016711157561
+  - -0.1345418740635012
+- - 0.99990329563695
+  - 0.004857827194069242
+  - 0.013030767027264023
+  - -0.12626667685463364
+- - 0.0
+  - 0.0
+  - 0.0
+  - 1.0

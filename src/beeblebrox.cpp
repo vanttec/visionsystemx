@@ -64,8 +64,8 @@ class DetectorInterface: public rclcpp::Node {
 private:
 	cv::Mat			res, image;
 	cv::Size		size        = cv::Size{640, 640};
-	int			num_labels  = 80;
-	int			topk        = 100;
+	int				num_labels  = 80;
+	int				topk        = 100;
 	float			score_thres = 0.25f;
 	float			iou_thres   = 0.65f;
 
@@ -190,28 +190,54 @@ void frame_send()
 ***/
 void receive_yolo(const usv_interfaces::msg::ZbboxArray::SharedPtr dets) {
 
-		RCLCPP_DEBUG(this->get_logger(), "[yolo] received detections: %ld", dets->boxes.size());
-	
-		std::vector<sl::CustomBoxObjectData> dets_sl;
-		
-		// convert from ros message to global format
-		to_sl(dets_sl, dets);
+    if (!dets || dets->boxes.empty()) {
+        RCLCPP_DEBUG(this->get_logger(), "[yolo] received empty detection message");
+        return;
+    }
 
-		auto start = std::chrono::system_clock::now();
+    RCLCPP_DEBUG(this->get_logger(), "[yolo] received detections: %ld", dets->boxes.size());
+    
+    std::vector<sl::CustomBoxObjectData> dets_sl;
+    
+    // convert from ros message to global format
+    to_sl(dets_sl, dets);
 
-		// send to zed sdk
-		sl::Objects out_objs;
-		zed_interface.cam.ingestCustomBoxObjects(dets_sl);
-		zed_interface.cam.retrieveObjects(out_objs, object_tracker_parameters_rt);
+    if (dets_sl.empty()) {
+        RCLCPP_DEBUG(this->get_logger(), "[yolo] no valid detections to process");
+        return;
+    }
 
-		auto end = std::chrono::system_clock::now();
-		auto tc = (double)std::chrono::duration_cast<std::chrono::microseconds>(end - start).count() / 1000.0;
-		
-		// publish detections in pointcloud
-		usv_interfaces::msg::ObjectList detections = objs2markers(out_objs);
-		this->yolo_pub->publish(detections);
+    auto start = std::chrono::system_clock::now();
 
-		RCLCPP_DEBUG(this->get_logger(), "[yolo] pointcloud estimation done: %2.4lf ms [%ld]", tc, detections.obj_list.size());
+    try {
+        // send to zed sdk
+        sl::Objects out_objs;
+        auto result = zed_interface.cam.ingestCustomBoxObjects(dets_sl);
+        if (result != sl::ERROR_CODE::SUCCESS) {
+            RCLCPP_WARN(this->get_logger(), "[yolo] Failed to ingest box objects: %s", 
+                        sl::toString(result).c_str());
+            return;
+        }
+        
+        result = zed_interface.cam.retrieveObjects(out_objs, object_tracker_parameters_rt);
+        if (result != sl::ERROR_CODE::SUCCESS) {
+            RCLCPP_WARN(this->get_logger(), "[yolo] Failed to retrieve objects: %s", 
+                        sl::toString(result).c_str());
+            return;
+        }
+
+        auto end = std::chrono::system_clock::now();
+        auto tc = (double)std::chrono::duration_cast<std::chrono::microseconds>(end - start).count() / 1000.0;
+        
+        // Publish detections in pointcloud
+        usv_interfaces::msg::ObjectList detections = objs2markers(out_objs);
+        this->yolo_pub->publish(detections);
+
+        RCLCPP_DEBUG(this->get_logger(), "[yolo] pointcloud estimation done: %2.4lf ms [%ld]", 
+                     tc, detections.obj_list.size());
+    } catch (const std::exception& e) {
+        RCLCPP_ERROR(this->get_logger(), "[yolo] error processing detections: %s", e.what());
+    }
 }
 
 /***
@@ -250,23 +276,24 @@ void receive_shapes(const usv_interfaces::msg::ZbboxArray::SharedPtr dets) {
  * @param dets: ros message
 ***/
 void to_sl(std::vector<sl::CustomBoxObjectData>& sl_dets, const usv_interfaces::msg::ZbboxArray::SharedPtr dets) {
-	for (auto& det : dets->boxes) {
-		sl::CustomBoxObjectData sl_det;
-		sl_det.label = det.label;
-		sl_det.probability = det.prob;
-		sl_det.unique_object_id = sl::String(det.uuid.data());
+    sl_dets.reserve(dets->boxes.size());
+    for (auto& det : dets->boxes) {
+        sl::CustomBoxObjectData sl_det;
+        sl_det.label = det.label;
+        sl_det.probability = det.prob;
+        sl_det.unique_object_id = sl::String(det.uuid.data());
 
-		std::vector<sl::uint2> bbox(4);
-		bbox[0] = sl::uint2(det.x0, det.y0);
-		bbox[1] = sl::uint2(det.x1, det.y0);
-		bbox[2] = sl::uint2(det.x1, det.y1);
-		bbox[3] = sl::uint2(det.x0, det.y1);
+        std::vector<sl::uint2> bbox(4);
+        bbox[0] = sl::uint2(det.x0, det.y0);
+        bbox[1] = sl::uint2(det.x1, det.y0);
+        bbox[2] = sl::uint2(det.x1, det.y1);
+        bbox[3] = sl::uint2(det.x0, det.y1);
 
-		sl_det.bounding_box_2d = bbox;
-		sl_det.is_grounded = false; // si es `true`, la zed no rastreara este objeto
+        sl_det.bounding_box_2d = bbox;
+        sl_det.is_grounded = false; // if true, ZED won't track this object
 
-		sl_dets.push_back(sl_det);
-	}
+        sl_dets.push_back(sl_det);
+    }
 }
 
 /***

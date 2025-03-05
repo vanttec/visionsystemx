@@ -44,39 +44,19 @@
         }                                                                                                              \
     } while (0)
 
-class Logger: public nvinfer1::ILogger {
+// TensorRT logger implementation
+class Logger : public nvinfer1::ILogger {
 public:
-    nvinfer1::ILogger::Severity reportableSeverity;
-
-    explicit Logger(nvinfer1::ILogger::Severity severity = nvinfer1::ILogger::Severity::kINFO):
-        reportableSeverity(severity)
-    {
-    }
-
-    void log(nvinfer1::ILogger::Severity severity, const char* msg) noexcept override
-    {
-        if (severity > reportableSeverity) {
-            return;
+    explicit Logger(nvinfer1::ILogger::Severity severity = nvinfer1::ILogger::Severity::kERROR) 
+        : severity_(severity) {}
+    
+    void log(nvinfer1::ILogger::Severity severity, const char* msg) noexcept override {
+        if (severity <= severity_) {
+            std::cout << "[TensorRT] " << msg << std::endl;
         }
-        switch (severity) {
-            case nvinfer1::ILogger::Severity::kINTERNAL_ERROR:
-                std::cerr << "INTERNAL_ERROR: ";
-                break;
-            case nvinfer1::ILogger::Severity::kERROR:
-                std::cerr << "ERROR: ";
-                break;
-            case nvinfer1::ILogger::Severity::kWARNING:
-                std::cerr << "WARNING: ";
-                break;
-            case nvinfer1::ILogger::Severity::kINFO:
-                std::cerr << "INFO: ";
-                break;
-            default:
-                std::cerr << "VERBOSE: ";
-                break;
-        }
-        std::cerr << msg << std::endl;
     }
+private:
+    nvinfer1::ILogger::Severity severity_;
 };
 
 inline int get_size_by_dims(const nvinfer1::Dims& dims)
