@@ -72,38 +72,47 @@ private:
 
     std::unique_ptr<E> detector_engine;
 
-    // Image transport objects
+    // image transport objects
     std::shared_ptr<image_transport::ImageTransport> it;
     std::shared_ptr<image_transport::Subscriber> is;
-    image_transport::Publisher draw_pub;  // Publisher for the drawn image
+    image_transport::Publisher draw_pub;  // publisher for the drawn image
 
-    // Publisher for detections
+    // publisher for detections
     std::shared_ptr<rclcpp::Publisher<usv_interfaces::msg::ZbboxArray>> dets;
 
     void frame(const sensor_msgs::msg::Image::ConstSharedPtr &msg)
     {
         try {
-            // Convert incoming ROS image to OpenCV image
+
+            RCLCPP_DEBUG(this->get_logger(), "Image encoding: %s", msg->encoding.c_str());
+
+            // convert incoming ROS image to OpenCV image
             auto cv_ptr = cv_bridge::toCvCopy(msg, "bgr8");
             cv::Mat img = cv_ptr->image;
 
-            // Run inference using YOLOv8
+            if (img.empty() || img.cols <= 0 || img.rows <= 0) {
+                RCLCPP_ERROR(this->get_logger(), "Empty or invalid image dimensions: %dx%d", 
+                            img.cols, img.rows);
+                return;
+            }
+
+            // run inference using YOLOv8
             detector_engine->copy_from_Mat(img, size);
             detector_engine->infer();
 
-            // Get detection results
+            // get detection results
             usv_interfaces::msg::ZbboxArray objs = detector_engine->postprocess();
             objs.header.stamp = this->now();
 
-            // Publish detections
+            // publish detections
             this->dets->publish(objs);
-            RCLCPP_INFO(this->get_logger(), "--> inference done [%ld detections]", objs.boxes.size());
+            //RCLCPP_INFO(this->get_logger(), "--> inference done [%ld detections]", objs.boxes.size());
 
-            // Draw the detections on the image
+            // draw the detections on the image
             cv::Mat annotated;
             detector_engine->draw_objects(img, annotated, objs, NAMES, COLORS);
 
-            // Convert the annotated image back to a ROS image message
+            // convert the annotated image back to a ROS image message
             auto annotated_msg = cv_bridge::CvImage(msg->header, "bgr8", annotated).toImageMsg();
             this->draw_pub.publish(annotated_msg);
         } catch (const std::exception &e) {
@@ -136,15 +145,15 @@ public:
             throw;
         }
 
-        // Publisher for detection results
+        // publisher for detection results
         this->dets = this->create_publisher<usv_interfaces::msg::ZbboxArray>(output_topic, 10);
     }
 
     void init() {
-        // Initialize image transport
+        // initialize image transport
         this->it = std::make_shared<image_transport::ImageTransport>(this->shared_from_this());
 
-        // Subscriber to the raw video topic
+        // subscriber to the raw video topic
         this->is = std::make_shared<image_transport::Subscriber>(
             it->subscribe(
                 video_topic,
@@ -153,7 +162,7 @@ public:
             )
         );
 
-        // Advertise the topic for the drawn (annotated) image
+        // advertise the topic for the drawn (annotated) image
         this->draw_pub = it->advertise("yolo/draw", 10);
 
         RCLCPP_INFO(this->get_logger(), "-> yolo ready");

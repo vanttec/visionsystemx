@@ -24,12 +24,14 @@ find_package(image_transport REQUIRED)
 find_package(OpenCV REQUIRED)
 find_package(CUDA 10.2 REQUIRED)
 find_package(ZED 4 REQUIRED)
+find_package(PCL REQUIRED)
+find_package(pcl_conversions REQUIRED)
 
 set(TensorRT_INCLUDE_DIRS /usr/include/aarch64-linux-gnu)
 set(TensorRT_LIBRARIES /usr/lib/aarch64-linux-gnu)
 
 add_executable(beeblebrox src/beeblebrox.cpp)
-ament_target_dependencies(beeblebrox rclcpp std_msgs OpenCV cv_bridge image_transport CUDA ZED usv_interfaces)
+ament_target_dependencies(beeblebrox rclcpp std_msgs OpenCV cv_bridge image_transport CUDA ZED PCL pcl_conversions usv_interfaces)
 target_include_directories(beeblebrox PRIVATE ${CUDA_INCLUDE_DIRS})
 target_link_libraries(beeblebrox ${CUDA_LIBRARIES} ${TensorRT_LIBRARIES} nvinfer nvinfer_plugin)
 

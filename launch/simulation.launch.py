@@ -5,22 +5,7 @@ from launch.substitutions import PathJoinSubstitution
 from launch_ros.substitutions import FindPackageShare
 from launch_ros.actions import Node
 
-def generate_launch_description():
-    velodyne = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource([
-            PathJoinSubstitution([
-                FindPackageShare('velodyne'),
-                'launch',
-                'velodyne-all-nodes-VLP16-composed-launch.py'
-            ])
-        ])
-    )
-    
-    rqt = Node(
-        package="rqt_gui",
-        executable="rqt_gui"
-    )
-    
+def generate_launch_description():    
     rviz = Node(
         package="rviz2",
         executable="rviz2"
@@ -34,11 +19,9 @@ def generate_launch_description():
         parameters=[
             {'engine_path': '/home/vanttec/vanttec_usv/RB2025v2.engine'},
             {'video_topic': '/bebblebrox/video'},
-            {'output_topic': '/shapes/detections'},
+            {'output_topic': '/bebblebrox/detections'},
             {'threshold': 0.5},
         ],
-        # ros debug printing
-        # arguments=['--ros-args', '--log-level', 'DEBUG']
     )
     
     video_feed = Node(
@@ -47,13 +30,25 @@ def generate_launch_description():
         name='beeblebrox',
         output='screen',
         parameters=[
-            # Real-life mode flag
-            {'simulation_mode': False},
-            # Standard parameters
-            {'objects_shapes_topic': '/objects_docking'},
+            # simulation mode settings
+            {'simulation_mode': True},
+            
+            # standard parameters
             {'video_topic': '/bebblebrox/video'},
-            {'shapes_sub_topic': '/shapes/detections'},
-            {'frame_interval': 100}, # run every 100 ms  
+            {'yolo_sub_topic': '/bebblebrox/detections'},
+            
+            # simulation-specific parameters
+            {'pointcloud_topic': '/zed_rgbd/points'},
+            {'depth_viz_topic': '/bebblebrox/points'},
+            
+            # optional camera parameters for simulation
+            # these are used as fallback if the pointcloud doesn't have organized structure
+            {'sim_width': 640},
+            {'sim_height': 480},
+            {'sim_fx': 500.0},
+            {'sim_fy': 500.0},
+            {'sim_cx': 320.0},
+            {'sim_cy': 240.0},
         ],
         # arguments=['--ros-args', '--log-level', 'DEBUG']
     )
@@ -61,7 +56,5 @@ def generate_launch_description():
     return LaunchDescription([
         video_feed,
         yolo_tensorrt,
-        velodyne,
         # rviz,
-        # rqt,
     ])
