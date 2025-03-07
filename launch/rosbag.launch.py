@@ -34,8 +34,8 @@ def generate_launch_description():
         parameters=[
             {'engine_path': '/home/vanttec/vanttec_usv/SARASOTA.engine'},
             {'video_topic': '/bebblebrox/video'},
-            {'output_topic': '/yolo/detections'},
-            {'threshold': 0.5},
+            {'output_topic': '/shapes/detections'},
+            {'threshold': 0.60},
         ],
         # ros debug printing
         # arguments=['--ros-args', '--log-level', 'DEBUG']
@@ -50,8 +50,9 @@ def generate_launch_description():
             # Real-life mode flag
             {'simulation_mode': False},
             # Standard parameters
-            {'video_topic': '/bebblebrox/video'},
-            {'yolo_sub_topic': '/yolo/detections'},
+            {'objects_shapes_topic': '/objects_docking'},
+            {'video_topic': '/none'},
+            {'shapes_sub_topic': '/shapes/detections'},
             {'frame_interval': 100}, # run every 100 ms  
         ],
         # arguments=['--ros-args', '--log-level', 'DEBUG']
@@ -65,8 +66,8 @@ def generate_launch_description():
     return LaunchDescription([
         video_feed,
         yolo_tensorrt,
-        velodyne,
+        # velodyne,
         # fusion,
         # rviz,
-        # rqt,
+        rqt,
     ])

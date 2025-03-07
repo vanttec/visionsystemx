@@ -3,8 +3,8 @@ lidar:
   frame_id: velodyne
 
 camera:
-  image_topic: /zed_raw
-  projected_topic: /zed_raw/projected
+  image_topic: /bebblebrox/video
+  projected_topic: /bebblebrox/video/projected
   image_size:
     width: 2560
     height: 720

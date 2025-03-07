@@ -26,19 +26,33 @@ find_package(CUDA 10.2 REQUIRED)
 find_package(ZED 4 REQUIRED)
 find_package(PCL REQUIRED)
 find_package(pcl_conversions REQUIRED)
+find_package(message_filters REQUIRED)
+find_package(Eigen3 REQUIRED)
 
 set(TensorRT_INCLUDE_DIRS /usr/include/aarch64-linux-gnu)
 set(TensorRT_LIBRARIES /usr/lib/aarch64-linux-gnu)
 
 add_executable(beeblebrox src/beeblebrox.cpp)
-ament_target_dependencies(beeblebrox rclcpp std_msgs OpenCV cv_bridge image_transport CUDA ZED PCL pcl_conversions usv_interfaces)
+
+ament_target_dependencies(beeblebrox
+  rclcpp std_msgs OpenCV cv_bridge image_transport CUDA ZED PCL pcl_conversions usv_interfaces
+)
 target_include_directories(beeblebrox PRIVATE ${CUDA_INCLUDE_DIRS})
 target_link_libraries(beeblebrox ${CUDA_LIBRARIES} ${TensorRT_LIBRARIES} nvinfer nvinfer_plugin)
 
 add_executable(yolo src/detectors/yolo_tensorrt/yolo_tensorrt_node.cpp)
-ament_target_dependencies(yolo rclcpp std_msgs OpenCV cv_bridge image_transport CUDA ZED usv_interfaces)
+ament_target_dependencies(yolo
+  rclcpp std_msgs OpenCV cv_bridge image_transport CUDA ZED usv_interfaces
+)
 target_include_directories(yolo PRIVATE ${CUDA_INCLUDE_DIRS})
 target_link_libraries(yolo ${CUDA_LIBRARIES} ${TensorRT_LIBRARIES} nvinfer nvinfer_plugin)
+
+add_executable(lidar src/lidar/translation.cpp)
+ament_target_dependencies(lidar
+  rclcpp std_msgs OpenCV cv_bridge image_transport CUDA ZED PCL pcl_conversions usv_interfaces message_filters Eigen3
+)
+target_include_directories(lidar PRIVATE ${CUDA_INCLUDE_DIRS})
+target_link_libraries(lidar ${CUDA_LIBRARIES} ${TensorRT_LIBRARIES} nvinfer nvinfer_plugin ${Eigen3_LIBRARIES})
 
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)
@@ -56,6 +70,7 @@ install(PROGRAMS ${SCRIPTS} ${PY_DETECTORS} DESTINATION lib/${PROJECT_NAME})
 install(TARGETS
   beeblebrox
   yolo
+  lidar
   DESTINATION lib/${PROJECT_NAME}
 )
 

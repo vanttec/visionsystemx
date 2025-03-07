@@ -1,5 +1,5 @@
 #define GPU
-// #define USE_ZED_SDK
+#define USE_ZED_SDK
 
 // ros
 #include "cv_bridge/cv_bridge.h"
@@ -36,6 +36,7 @@
 #include <cuda_runtime_api.h>
 
 // local headers
+#include "bytetrack.hpp"
 #ifdef USE_ZED_SDK
 #include "zed.hpp"
 #endif
@@ -119,6 +120,13 @@ private:
     // timer in which to execute everything
     rclcpp::TimerBase::SharedPtr timer;
 
+    // dynamic parameters
+    rclcpp::node_interfaces::OnSetParametersCallbackHandle::SharedPtr param_callback_handle_;
+    double high_threshold = 0.6;
+    double low_threshold = 0.1;
+    int max_time_lost = 30;
+    int min_hits = 3;
+
 #ifdef USE_ZED_SDK
     sl::Mat left_sl, point_cloud;
     // instance of the zed camera
@@ -132,6 +140,9 @@ private:
     // dimensions of the latest pointcloud
     int cloud_width = 0;
     int cloud_height = 0;
+
+    // tracker
+    bytetrack::ByteTrack yolo_tracker;
 
     // optional: camera parameter
     // (only needed for unorganized pointclouds)
@@ -465,13 +476,25 @@ void receive_yolo(const usv_interfaces::msg::ZbboxArray::SharedPtr dets) {
 
     RCLCPP_DEBUG(this->get_logger(), "[yolo] received detections: %ld", dets->boxes.size());
     
+    // Apply ByteTrack to incoming detections
+    // usv_interfaces::msg::ZbboxArray tracked_dets = yolo_tracker.update(*dets);
+    // RCLCPP_DEBUG(this->get_logger(), "[yolo] tracked detections: %ld", tracked_dets.boxes.size());
+    
     if (simulation_mode) {
         // process detections in simulation mode
         usv_interfaces::msg::ObjectList detections;
-        
+
         for (const auto& det : dets->boxes) {
             auto position = get_position_from_simulation(det);
             
+            // RED
+            // GREEN
+            // BLUE
+            // YELLOW
+            // BLACK
+
+            RCLCPP_INFO(this->get_logger(), "[yolo] debug label: %ld", det.label);
+
             usv_interfaces::msg::Object obj;
             switch (det.label) {
                 case 0:  // black
@@ -519,7 +542,12 @@ void receive_yolo(const usv_interfaces::msg::ZbboxArray::SharedPtr dets) {
                 obj.x = 0.0;
                 obj.y = 0.0;
                 obj.type = "ignore";
-				RCLCPP_DEBUG(this->get_logger(), "[yolo] NaN on coordinates");
+                RCLCPP_DEBUG(this->get_logger(), "[yolo] NaN on coordinates");
+            }
+            
+            // Preserve the track ID if available
+            if (!det.uuid.empty()) {
+                obj.uuid = det.uuid;
             }
             
             detections.obj_list.push_back(obj);
@@ -534,6 +562,7 @@ void receive_yolo(const usv_interfaces::msg::ZbboxArray::SharedPtr dets) {
         
         // convert from ros message to global format
         to_sl(dets_sl, dets);
+        // to_sl(dets_sl, std::make_shared<usv_interfaces::msg::ZbboxArray>(dets));
 
         if (dets_sl.empty()) {
             RCLCPP_DEBUG(this->get_logger(), "[yolo] no valid detections to process");
@@ -564,6 +593,14 @@ void receive_yolo(const usv_interfaces::msg::ZbboxArray::SharedPtr dets) {
             
             // publish detections in pointcloud
             usv_interfaces::msg::ObjectList detections = objs2markers(out_objs);
+            
+            // Add the tracking UUIDs to the output object list
+            // for (size_t i = 0; i < detections.obj_list.size() && i < tracked_dets.boxes.size(); ++i) {
+            //     if (!tracked_dets.boxes[i].uuid.empty()) {
+            //         detections.obj_list[i].uuid = tracked_dets.boxes[i].uuid;
+            //     }
+            // }
+            
             this->yolo_pub->publish(detections);
 
             RCLCPP_DEBUG(this->get_logger(), "[yolo] pointcloud estimation done: %2.4lf ms [%ld]", 
@@ -594,6 +631,12 @@ void receive_shapes(const usv_interfaces::msg::ZbboxArray::SharedPtr dets) {
         for (const auto& det : dets->boxes) {
             auto position = get_position_from_simulation(det);
             
+            // RED
+            // GREEN
+            // BLUE
+            // YELLOW
+            // BLACK
+
             usv_interfaces::msg::Object obj;
             switch (det.label) {
                 case 0:     // blue circle
@@ -702,12 +745,18 @@ void receive_shapes(const usv_interfaces::msg::ZbboxArray::SharedPtr dets) {
  * @param dets: ros message
 ***/
 void to_sl(std::vector<sl::CustomBoxObjectData>& sl_dets, const usv_interfaces::msg::ZbboxArray::SharedPtr dets) {
-    sl_dets.reserve(dets->boxes.size());
     for (auto& det : dets->boxes) {
         sl::CustomBoxObjectData sl_det;
         sl_det.label = det.label;
         sl_det.probability = det.prob;
-        sl_det.unique_object_id = sl::String(det.uuid.data());
+        
+        // Use the UUID from ByteTrack if available, otherwise use the default UUID
+        if (!det.uuid.empty()) {
+            sl_det.unique_object_id = sl::String(det.uuid.data());
+        } else {
+            // If there's no UUID in the detection, use the one from ZED SDK
+            sl_det.unique_object_id = sl::String(det.uuid.data());
+        }
 
         std::vector<sl::uint2> bbox(4);
         bbox[0] = sl::uint2(det.x0, det.y0);
@@ -716,11 +765,12 @@ void to_sl(std::vector<sl::CustomBoxObjectData>& sl_dets, const usv_interfaces::
         bbox[3] = sl::uint2(det.x0, det.y1);
 
         sl_det.bounding_box_2d = bbox;
-        sl_det.is_grounded = false; // if true, ZED won't track this object
+        sl_det.is_grounded = false; // si es `true`, la zed no rastreara este objeto
 
         sl_dets.push_back(sl_det);
     }
 }
+#endif
 
 /***
  * convert from global format to message understandable by usv_control
@@ -837,7 +887,9 @@ usv_interfaces::msg::ObjectList objs2markers(sl::Objects objs) {
 
             usv_interfaces::msg::Object o;
 
-            int color = 0;
+            // Set object UUID from ZED tracking ID
+            // This will be overwritten later with ByteTrack UUID if available
+            o.uuid = std::to_string(obj.id);
 
             switch (obj.raw_label) {
                 case 0:  // black
@@ -873,18 +925,18 @@ usv_interfaces::msg::ObjectList objs2markers(sl::Objects objs) {
                     o.type = "round";
                     break;
                 default: // TODO
-                    color = -1;
+                    o.color = -1;
                     o.type = "ignore";
                     break;
             }
 
             o.x = obj.position[0];
-            if ( std::isnan(o.x) ) {
+            if (std::isnan(o.x)) {
                 o.x = 0.0;
             }
 
             o.y = obj.position[1];
-            if ( std::isnan(o.y) ) {
+            if (std::isnan(o.y)) {
                 o.y = 0.0;
             }
 
@@ -897,13 +949,64 @@ usv_interfaces::msg::ObjectList objs2markers(sl::Objects objs) {
             o.x = 0;
             o.y = 0;
             o.type = "ignore";
+            o.uuid = "";
             ma.obj_list.push_back(o);
         }
     }
     
     return ma;
 }
-#endif
+
+rcl_interfaces::msg::SetParametersResult parametersCallback(
+    const std::vector<rclcpp::Parameter>& parameters) {
+    rcl_interfaces::msg::SetParametersResult result;
+    result.successful = true;
+    result.reason = "success";
+
+    bool tracker_params_changed = false;
+    double new_high_threshold = high_threshold;
+    double new_low_threshold = low_threshold;
+    int new_max_time_lost = max_time_lost;
+    int new_min_hits = min_hits;
+
+    for (const auto& param : parameters) {
+        if (param.get_name() == "tracker_high_threshold") {
+            new_high_threshold = param.as_double();
+            tracker_params_changed = true;
+        } else if (param.get_name() == "tracker_low_threshold") {
+            new_low_threshold = param.as_double();
+            tracker_params_changed = true;
+        } else if (param.get_name() == "tracker_max_time_lost") {
+            new_max_time_lost = param.as_int();
+            tracker_params_changed = true;
+        } else if (param.get_name() == "tracker_min_hits") {
+            new_min_hits = param.as_int();
+            tracker_params_changed = true;
+        }
+    }
+
+    // Update tracker parameters if any changed
+    if (tracker_params_changed) {
+        RCLCPP_INFO(this->get_logger(), "Updating tracker parameters: high=%.2f, low=%.2f, max_lost=%d, min_hits=%d",
+                    new_high_threshold, new_low_threshold, new_max_time_lost, new_min_hits);
+        
+        // Update member variables
+        high_threshold = new_high_threshold;
+        low_threshold = new_low_threshold;
+        max_time_lost = new_max_time_lost;
+        min_hits = new_min_hits;
+        
+        // Update the tracker with new parameters
+        yolo_tracker.updateParameters(
+            high_threshold,
+            low_threshold,
+            max_time_lost,
+            min_hits
+        );
+    }
+
+    return result;
+}
 
 public:
 #ifdef USE_ZED_SDK
@@ -967,6 +1070,35 @@ DetectorInterface()
     this->declare_parameter("frame_interval", 100);
     int frame_interval = this->get_parameter("frame_interval").as_int();
 
+    // high threshold for bytetrack tracker
+    this->declare_parameter("high_threshold", 0.6);
+    this->high_threshold = this->get_parameter("high_threshold").as_double();
+
+    // low threshold for bytetrack tracker
+    this->declare_parameter("low_threshold", 0.1);
+    this->low_threshold = this->get_parameter("low_threshold").as_double();
+
+    // time lost in frames elapsed for bytetrack tracker
+    this->declare_parameter("max_time_lost", 30);
+    this->max_time_lost = this->get_parameter("max_time_lost").as_int();
+
+    // min hits for bytetrack tracler
+    this->declare_parameter("min_hits", 3);
+    this->min_hits = this->get_parameter("min_hits").as_int();
+
+    param_callback_handle_ = this->add_on_set_parameters_callback(
+        std::bind(&DetectorInterface::parametersCallback, this, std::placeholders::_1)
+    );
+
+    // create bytetrack trackers with the specified parameters
+    yolo_tracker = bytetrack::ByteTrack(
+        high_threshold, 
+        low_threshold, 
+        max_time_lost, 
+        min_hits, 
+        this->get_logger()
+    );
+
     /* PUBLISHERS */
     
     // yolo's final detections publisher
@@ -982,7 +1114,6 @@ DetectorInterface()
     
     // Depth visualization publisher
     this->depth_image_publisher = it.advertise(depth_viz_topic, 5);
-
     this->cam_info_pub = this->create_publisher<sensor_msgs::msg::CameraInfo>("/bebblebrox/camera_info", 10);
 
     /* SUBSCRIBERS */

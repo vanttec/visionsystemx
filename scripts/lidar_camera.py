@@ -13,6 +13,8 @@ from sensor_msgs.msg import Image, PointCloud2
 from cv_bridge import CvBridge
 from message_filters import Subscriber, ApproximateTimeSynchronizer
 
+from ament_index_python import get_package_share_directory
+
 def extract_configuration():
     config_file = os.path.join(
         get_package_share_directory('visionsystemx'),
@@ -22,6 +24,7 @@ def extract_configuration():
 
     with open(config_file, 'r') as file:
         config = yaml.safe_load(file)
+        return config
 
 def pointcloud2_to_xyz_array_fast(cloud_msg: PointCloud2, skip_rate: int = 1) -> np.ndarray:
     if cloud_msg.height == 0 or cloud_msg.width == 0:

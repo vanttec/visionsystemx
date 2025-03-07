@@ -14,26 +14,25 @@ using std::placeholders::_1;
 
 const std::vector<std::string> NAMES {
 	"black_buoy",
-	"blue_bbuoy",
+	"blue_buoy",
 	"course_marker",
-	"green_buoy",
 	"port_marker",
-	"red_buoy",
 	"starboard_marker",
 	"yellow_marker",
-	"ducks",
+    "blue_circle",
 	"blue_cross",
-	"red_circle",
-	"red_triangle",
-	"green_cross",
+    "blue_square"
 	"blue_triangle",
-	"green_square",
-	"red_cross",
 	"green_circle",
-	"red_square",
+	"green_cross",
+	"green_square",
 	"green_triangle",
-	"blue_circle",
-	"blue_square"
+	"red_circle",
+	"red_cross",
+	"red_square",
+	"red_triangle",
+    "green_buoy",
+    "red_buoy"
 };
 
 const std::vector<std::vector<unsigned int>> COLORS {
@@ -106,7 +105,7 @@ private:
 
             // publish detections
             this->dets->publish(objs);
-            //RCLCPP_INFO(this->get_logger(), "--> inference done [%ld detections]", objs.boxes.size());
+            RCLCPP_INFO(this->get_logger(), "--> inference done [%ld detections]", objs.boxes.size());
 
             // draw the detections on the image
             cv::Mat annotated;
