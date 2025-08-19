@@ -5,7 +5,7 @@ include(CMakePrintHelpers)
 set(CMAKE_CUDA_ARCHITECTURES 60 61 62 70 72 75 86)
 set(CMAKE_CUDA_COMPILER /usr/local/cuda/bin/nvcc)
 
-project(visionsystemx LANGUAGES CXX CUDA)
+project(visionsystemx LANGUAGES C CXX CUDA)
 if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   add_compile_options(-Wall -Wextra -Wpedantic)
 endif()
