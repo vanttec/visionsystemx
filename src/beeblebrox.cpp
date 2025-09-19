@@ -1,5 +1,5 @@
 #define GPU
-#define USE_ZED_SDK
+// #define USE_ZED_SDK
 
 // ros
 #include "cv_bridge/cv_bridge.h"
@@ -22,6 +22,7 @@
 #ifdef USE_ZED_SDK
 #include "sl/Camera.hpp"
 #endif
+#include "sl/Camera.hpp"
 
 // opencv
 #include "opencv2/opencv.hpp"
