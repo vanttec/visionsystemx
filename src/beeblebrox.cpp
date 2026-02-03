@@ -1,5 +1,5 @@
 #define GPU
-// #define USE_ZED_SDK
+#define USE_ZED_SDK
 
 // ros
 #include "cv_bridge/cv_bridge.h"
