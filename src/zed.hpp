@@ -6,8 +6,9 @@
 class ZED_usv {
 public:
     sl::Camera cam;
+    bool object_detection_enabled = false;  // ZED 1 doesn't support object detection
 
-    ZED_usv(rclcpp::Logger);
+    ZED_usv(rclcpp::Logger, const std::string& camera_model = "zed2i");
     ~ZED_usv();
 
 private:
@@ -15,11 +16,15 @@ private:
     sl::ObjectDetectionParameters detection_params;
 
     rclcpp::Logger logger;
+    std::string model;
 };
 
-ZED_usv::ZED_usv(rclcpp::Logger logger_param) : logger(logger_param)
+ZED_usv::ZED_usv(rclcpp::Logger logger_param, const std::string& camera_model) : logger(logger_param), model(camera_model)
 {   
     this->logger = logger_param;
+    
+    bool is_zed1 = (camera_model == "zed" || camera_model == "zed1");
+    RCLCPP_INFO(this->logger, "Initializing camera model: %s", camera_model.c_str());
 
     // OPTIMIZED SETTINGS FOR JETSON ORIN NX AND NANO - USB STABILITY FIX
 
@@ -62,7 +67,7 @@ ZED_usv::ZED_usv(rclcpp::Logger logger_param) : logger(logger_param)
     tracking_params.enable_area_memory = true;     // DEFAULT - saves/loads area maps
     // tracking_params.enable_area_memory = false;    // OPTIMIZED - reduces memory usage
     tracking_params.enable_pose_smoothing = true;     // Keep smoothing for better tracking
-    tracking_params.enable_imu_fusion = true;         // Keep IMU fusion for accuracy
+    tracking_params.enable_imu_fusion = !is_zed1;     // ZED 1 has no IMU, disable fusion for it
     
     // ORIGINAL: cam.enablePositionalTracking();      // Used default parameters
     auto tracking_state = cam.enablePositionalTracking(tracking_params);  // OPTIMIZED
@@ -76,15 +81,23 @@ ZED_usv::ZED_usv(rclcpp::Logger logger_param) : logger(logger_param)
     detection_params.enable_segmentation = false;
     detection_params.detection_model = sl::OBJECT_DETECTION_MODEL::CUSTOM_BOX_OBJECTS;
 
-    returned_state = cam.enableObjectDetection(detection_params);
-    if (returned_state != sl::ERROR_CODE::SUCCESS) {
-        RCLCPP_ERROR(this->logger, "Failed to enable object detection in ZED SDK: %s", 
-                    sl::toString(returned_state).c_str());
-        cam.close();
-        throw std::runtime_error("Failed to enable object detection in ZED SDK");
+    // ZED 1 doesn't support object detection module - skip it
+    if (is_zed1) {
+        RCLCPP_INFO(this->logger, "ZED 1 detected - skipping object detection (not supported)");
+        object_detection_enabled = false;
+    } else {
+        returned_state = cam.enableObjectDetection(detection_params);
+        if (returned_state != sl::ERROR_CODE::SUCCESS) {
+            RCLCPP_ERROR(this->logger, "Failed to enable object detection in ZED SDK: %s", 
+                        sl::toString(returned_state).c_str());
+            cam.close();
+            throw std::runtime_error("Failed to enable object detection in ZED SDK");
+        }
+        object_detection_enabled = true;
     }
 
-    RCLCPP_INFO(this->logger, "ZED camera initialized successfully (NEURAL_LIGHT, HD720@15fps)");
+    RCLCPP_INFO(this->logger, "ZED camera initialized successfully (model: %s, ULTRA depth, HD1080@30fps)", 
+                camera_model.c_str());
 }
 
 ZED_usv::~ZED_usv()

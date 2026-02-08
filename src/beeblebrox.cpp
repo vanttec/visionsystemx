@@ -361,19 +361,31 @@ void frame_send() {
             sl::Resolution res;
             res = zed_interface.cam.getCameraInformation().camera_configuration.resolution;
 
-            // only for ZED2, ZED2i, ZEDX and ZEDXm
-            leftCamInfoMsg.distortion_model = sensor_msgs::distortion_models::RATIONAL_POLYNOMIAL;
-
-            // yes
-            leftCamInfoMsg.d.resize(8);
-            leftCamInfoMsg.d[0] = zedParam.left_cam.disto[0];    // k1
-            leftCamInfoMsg.d[1] = zedParam.left_cam.disto[1];    // k2
-            leftCamInfoMsg.d[2] = zedParam.left_cam.disto[2];    // p1
-            leftCamInfoMsg.d[3] = zedParam.left_cam.disto[3];    // p2
-            leftCamInfoMsg.d[4] = zedParam.left_cam.disto[4];    // k3
-            leftCamInfoMsg.d[5] = zedParam.left_cam.disto[5];    // k4
-            leftCamInfoMsg.d[6] = zedParam.left_cam.disto[6];    // k5
-            leftCamInfoMsg.d[7] = zedParam.left_cam.disto[7];    // k6
+            // Check camera model for distortion model selection
+            sl::MODEL camera_model = zed_interface.cam.getCameraInformation().camera_model;
+            
+            if (camera_model == sl::MODEL::ZED) {
+                // ZED 1 uses PLUMB_BOB with 5 distortion coefficients (k1, k2, p1, p2, k3)
+                leftCamInfoMsg.distortion_model = sensor_msgs::distortion_models::PLUMB_BOB;
+                leftCamInfoMsg.d.resize(5);
+                leftCamInfoMsg.d[0] = zedParam.left_cam.disto[0];    // k1
+                leftCamInfoMsg.d[1] = zedParam.left_cam.disto[1];    // k2
+                leftCamInfoMsg.d[2] = zedParam.left_cam.disto[2];    // p1
+                leftCamInfoMsg.d[3] = zedParam.left_cam.disto[3];    // p2
+                leftCamInfoMsg.d[4] = zedParam.left_cam.disto[4];    // k3
+            } else {
+                // ZED2, ZED2i, ZEDX, ZEDXm use RATIONAL_POLYNOMIAL with 8 coefficients
+                leftCamInfoMsg.distortion_model = sensor_msgs::distortion_models::RATIONAL_POLYNOMIAL;
+                leftCamInfoMsg.d.resize(8);
+                leftCamInfoMsg.d[0] = zedParam.left_cam.disto[0];    // k1
+                leftCamInfoMsg.d[1] = zedParam.left_cam.disto[1];    // k2
+                leftCamInfoMsg.d[2] = zedParam.left_cam.disto[2];    // p1
+                leftCamInfoMsg.d[3] = zedParam.left_cam.disto[3];    // p2
+                leftCamInfoMsg.d[4] = zedParam.left_cam.disto[4];    // k3
+                leftCamInfoMsg.d[5] = zedParam.left_cam.disto[5];    // k4
+                leftCamInfoMsg.d[6] = zedParam.left_cam.disto[6];    // k5
+                leftCamInfoMsg.d[7] = zedParam.left_cam.disto[7];    // k6
+            }
 
             // yes
             leftCamInfoMsg.k.fill(0.0);
@@ -401,7 +413,9 @@ void frame_send() {
             // yes
             leftCamInfoMsg.width = static_cast<uint32_t>(res.width);
             leftCamInfoMsg.height = static_cast<uint32_t>(res.height);
-            leftCamInfoMsg.header.frame_id = "zed2i_left_camera_optical_frame";
+            leftCamInfoMsg.header.frame_id = (camera_model == sl::MODEL::ZED) 
+                ? "zed_left_camera_optical_frame" 
+                : "zed2i_left_camera_optical_frame";
             
             this->cam_info_pub->publish(leftCamInfoMsg);
         }
@@ -573,8 +587,16 @@ void receive_yolo(const usv_interfaces::msg::ZbboxArray::SharedPtr dets) {
         auto start = std::chrono::system_clock::now();
 
         try {
-            // send to zed sdk
+            // send to zed sdk (only if object detection is enabled - not available on ZED 1)
             sl::Objects out_objs;
+            
+            if (!zed_interface.object_detection_enabled) {
+                // ZED 1: Skip ZED SDK object detection, publish 2D detections only
+                RCLCPP_DEBUG(this->get_logger(), "[yolo] ZED 1 mode - skipping 3D object detection");
+                // TODO: Could implement manual depth lookup here if needed
+                return;
+            }
+            
             auto result = zed_interface.cam.ingestCustomBoxObjects(dets_sl);
             if (result != sl::ERROR_CODE::SUCCESS) {
                 RCLCPP_WARN(this->get_logger(), "[yolo] Failed to ingest box objects: %s", 
@@ -722,8 +744,15 @@ void receive_shapes(const usv_interfaces::msg::ZbboxArray::SharedPtr dets) {
 
         auto start = std::chrono::system_clock::now();
 
-        // send to zed sdk
+        // send to zed sdk (only if object detection is enabled - not available on ZED 1)
         sl::Objects out_objs;
+        
+        if (!zed_interface.object_detection_enabled) {
+            // ZED 1: Skip ZED SDK object detection
+            RCLCPP_DEBUG(this->get_logger(), "[shapes] ZED 1 mode - skipping 3D object detection");
+            return;
+        }
+        
         zed_interface.cam.ingestCustomBoxObjects(dets_sl);
         zed_interface.cam.retrieveObjects(out_objs, object_tracker_parameters_rt);
 
@@ -1012,13 +1041,18 @@ rcl_interfaces::msg::SetParametersResult parametersCallback(
 public:
 #ifdef USE_ZED_SDK
 DetectorInterface()
-    :   Node("bebblebrox_vision"), zed_interface(this->get_logger()) {
+    :   Node("bebblebrox_vision"), 
+        zed_interface(this->get_logger(), 
+                      this->declare_parameter("camera_model", std::string("zed2i"))) {
 #else
 DetectorInterface()
     :   Node("bebblebrox_vision") {
 #endif
 
     /* PARAMETERS */
+    
+    // camera_model already declared in initializer list for ZED SDK
+    // valid values: "zed" or "zed1" for ZED 1, "zed2i" for ZED 2i
     
     // set simulation mode parameter
     this->declare_parameter("simulation_mode", false);
