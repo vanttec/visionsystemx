@@ -39,10 +39,13 @@ ZED_usv::ZED_usv(rclcpp::Logger logger_param, const std::string& camera_model) :
     init_params.coordinate_units = sl::UNIT::METER;
     init_params.depth_maximum_distance = 20;
     
-    init_params.camera_resolution = sl::RESOLUTION::HD1080;  // DEFAULT (not set before)
-    init_params.camera_fps = 30;                              // DEFAULT (not set before)
-    // init_params.camera_resolution = sl::RESOLUTION::HD720;      // OPTIMIZED
-    // init_params.camera_fps = 15;                                 // OPTIMIZED
+    if (is_zed1) {
+        init_params.camera_resolution = sl::RESOLUTION::HD720;
+        init_params.camera_fps = 15;
+    } else {
+        init_params.camera_resolution = sl::RESOLUTION::HD1080;
+        init_params.camera_fps = 30;
+    }
        
     // init_params.enable_image_enhancement = true;  // DEFAULT
     init_params.enable_image_enhancement = false;    // OPTIMIZED

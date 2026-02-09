@@ -22,7 +22,6 @@
 #ifdef USE_ZED_SDK
 #include "sl/Camera.hpp"
 #endif
-#include "sl/Camera.hpp"
 
 // opencv
 #include "opencv2/opencv.hpp"
@@ -130,6 +129,9 @@ private:
 
 #ifdef USE_ZED_SDK
     sl::Mat left_sl, point_cloud;
+    sl::Mat cached_depth_sl;  // Cached depth map for ZED 1 mode
+    float cached_fx = 0, cached_fy = 0, cached_cx = 0, cached_cy = 0;  // Cached intrinsics
+    bool depth_valid = false;  // Flag indicating if cached depth is valid
     // instance of the zed camera
     ZED_usv zed_interface;
 #endif
@@ -153,6 +155,39 @@ private:
     double cy = 240.0;
     int img_width = 640;
     int img_height = 480;
+
+static void map_yolo_label(int label, usv_interfaces::msg::Object& obj) {
+    switch (label) {
+        case 0:  obj.color = 4; obj.type = "round";  break; // black
+        case 1:  obj.color = 2; obj.type = "round";  break; // blue
+        case 2:  obj.color = 4; obj.type = "marker"; break; // course marker
+        case 3:  obj.color = 1; obj.type = "round";  break; // green
+        case 4:  obj.color = 0; obj.type = "marker"; break; // red marker
+        case 5:  obj.color = 0; obj.type = "round";  break; // red
+        case 6:  obj.color = 1; obj.type = "marker"; break; // green marker
+        case 7:  obj.color = 3; obj.type = "round";  break; // yellow
+        default: obj.color = -1; obj.type = "ignore"; break;
+    }
+}
+
+static void map_shapes_label(int label, usv_interfaces::msg::Object& obj) {
+    switch (label) {
+        case 0:  obj.color = 2; obj.type = "circle";   break; // blue circle
+        case 1:  obj.color = 2; obj.type = "plus";      break; // blue plus
+        case 2:  obj.color = 2; obj.type = "square";    break; // blue square
+        case 3:  obj.color = 2; obj.type = "triangle";  break; // blue triangle
+        case 4:  obj.color = 3; obj.type = "duck";      break; // duck
+        case 5:  obj.color = 1; obj.type = "circle";    break; // green circle
+        case 6:  obj.color = 1; obj.type = "plus";      break; // green plus
+        case 7:  obj.color = 1; obj.type = "square";    break; // green square
+        case 8:  obj.color = 1; obj.type = "triangle";  break; // green triangle
+        case 9:  obj.color = 0; obj.type = "circle";    break; // red circle
+        case 10: obj.color = 0; obj.type = "plus";      break; // red plus
+        case 11: obj.color = 0; obj.type = "square";    break; // red square
+        case 12: obj.color = 0; obj.type = "triangle";  break; // red triangle
+        default: obj.color = -1; obj.type = "ignore";    break;
+    }
+}
 
 /**
  * extract data from an organized pointcloud
@@ -334,6 +369,21 @@ void frame_send() {
     if (!simulation_mode) {
         if (zed_interface.cam.grab() == sl::ERROR_CODE::SUCCESS) {
             
+            /* Cache depth map for ZED 1 mode (do this first, lightweight) */
+            if (!zed_interface.object_detection_enabled) {
+                auto err = zed_interface.cam.retrieveMeasure(cached_depth_sl, sl::MEASURE::DEPTH);
+                depth_valid = (err == sl::ERROR_CODE::SUCCESS);
+                
+                // Cache intrinsics once
+                if (cached_fx == 0) {
+                    auto calib = zed_interface.cam.getCameraInformation().camera_configuration.calibration_parameters;
+                    cached_fx = calib.left_cam.fx;
+                    cached_fy = calib.left_cam.fy;
+                    cached_cx = calib.left_cam.cx;
+                    cached_cy = calib.left_cam.cy;
+                }
+            }
+            
             /* publish zed image */
 
             // retrieve image from zed
@@ -511,45 +561,8 @@ void receive_yolo(const usv_interfaces::msg::ZbboxArray::SharedPtr dets) {
             RCLCPP_INFO(this->get_logger(), "[yolo] debug label: %ld", det.label);
 
             usv_interfaces::msg::Object obj;
-            switch (det.label) {
-                case 0:  // black
-                    obj.color = 4;
-                    obj.type = "round";
-                    break;
-                case 1:  // blue
-                    obj.color = 2;
-                    obj.type = "round";
-                    break;
-                case 2: // course marker
-                    obj.color = 4;
-                    obj.type = "marker";
-                    break;
-                case 3: // green
-                    obj.color = 1;
-                    obj.type = "round";
-                    break;
-                case 4: // red marker
-                    obj.color = 0;
-                    obj.type = "marker";
-                    break;
-                case 5: // red
-                    obj.color = 0;
-                    obj.type = "round";
-                    break;
-                case 6: // green marker
-                    obj.color = 1;
-                    obj.type = "marker";
-                    break;
-                case 7: // yellow
-                    obj.color = 3;
-                    obj.type = "round";
-                    break;
-                default:
-                    obj.color = -1;
-                    obj.type = "ignore";
-                    break;
-            }
-            
+            map_yolo_label(det.label, obj);
+
             obj.x = position[0];
             obj.y = position[1];
             
@@ -573,11 +586,85 @@ void receive_yolo(const usv_interfaces::msg::ZbboxArray::SharedPtr dets) {
 #ifdef USE_ZED_SDK
     else {
         // real-life mode using ZED SDK
+
+        if (!zed_interface.object_detection_enabled) {
+            // ZED 1: Use cached depth map (retrieved in frame_send)
+            if (!depth_valid) {
+                RCLCPP_DEBUG(this->get_logger(), "[yolo] ZED 1: no valid depth map cached");
+                return;
+            }
+
+            usv_interfaces::msg::ObjectList detections;
+            int img_w = cached_depth_sl.getWidth();
+                int img_h = cached_depth_sl.getHeight();
+                
+                for (const auto& det : dets->boxes) {
+                    // Get center of bounding box
+                    int cx = std::clamp((det.x0 + det.x1) / 2, 0, img_w - 1);
+                    int cy = std::clamp((det.y0 + det.y1) / 2, 0, img_h - 1);
+                    
+                    // Simple depth lookup at center point
+                    float depth = 0.0f;
+                    cached_depth_sl.getValue(cx, cy, &depth);
+                    
+                    // If center invalid, try a few nearby points
+                    if (!std::isfinite(depth) || depth < 0.3f || depth > 20.0f) {
+                        float sum = 0.0f;
+                        int count = 0;
+                        for (int dy = -5; dy <= 5; dy += 5) {
+                            for (int dx = -5; dx <= 5; dx += 5) {
+                                int px = std::clamp(cx + dx, 0, img_w - 1);
+                                int py = std::clamp(cy + dy, 0, img_h - 1);
+                                float d;
+                                cached_depth_sl.getValue(px, py, &d);
+                                if (std::isfinite(d) && d > 0.3f && d < 20.0f) {
+                                    sum += d;
+                                    count++;
+                                }
+                            }
+                        }
+                        depth = (count > 0) ? sum / count : 0.0f;
+                    }
+                    
+                    usv_interfaces::msg::Object obj;
+                    map_yolo_label(det.label, obj);
+
+                    // Convert pixel + depth to 3D using cached intrinsics
+                    // LEFT_HANDED_Z_UP: X=forward, Y=right, Z=up
+                    float cam_x = (static_cast<float>(cx) - cached_cx) * depth / cached_fx;
+                    float cam_z = depth;
+
+                    obj.x = cam_z;    // depth → forward (X)
+                    obj.y = cam_x;    // camera right → right (Y)
+                    
+                    if (!std::isfinite(obj.x) || !std::isfinite(obj.y) || depth == 0.0f) {
+                        obj.x = 0.0;
+                        obj.y = 0.0;
+                        obj.type = "ignore";
+                    }
+                    
+                    // Use detection UUID if available
+                    if (!det.uuid.empty()) {
+                        obj.uuid = det.uuid;
+                    }
+                    
+                    detections.obj_list.push_back(obj);
+                }
+
+                // Pad to 10 objects to match objs2markers output
+                while (detections.obj_list.size() < 10) {
+                    usv_interfaces::msg::Object pad;
+                    pad.color = -1; pad.x = 0; pad.y = 0; pad.type = "ignore";
+                    detections.obj_list.push_back(pad);
+                }
+
+                this->yolo_pub->publish(detections);
+                return;
+        }
+
+        // ZED 2i+ path: use SDK object detection
         std::vector<sl::CustomBoxObjectData> dets_sl;
-        
-        // convert from ros message to global format
         to_sl(dets_sl, dets);
-        // to_sl(dets_sl, std::make_shared<usv_interfaces::msg::ZbboxArray>(dets));
 
         if (dets_sl.empty()) {
             RCLCPP_DEBUG(this->get_logger(), "[yolo] no valid detections to process");
@@ -587,46 +674,28 @@ void receive_yolo(const usv_interfaces::msg::ZbboxArray::SharedPtr dets) {
         auto start = std::chrono::system_clock::now();
 
         try {
-            // send to zed sdk (only if object detection is enabled - not available on ZED 1)
             sl::Objects out_objs;
-            
-            if (!zed_interface.object_detection_enabled) {
-                // ZED 1: Skip ZED SDK object detection, publish 2D detections only
-                RCLCPP_DEBUG(this->get_logger(), "[yolo] ZED 1 mode - skipping 3D object detection");
-                // TODO: Could implement manual depth lookup here if needed
-                return;
-            }
-            
             auto result = zed_interface.cam.ingestCustomBoxObjects(dets_sl);
             if (result != sl::ERROR_CODE::SUCCESS) {
-                RCLCPP_WARN(this->get_logger(), "[yolo] Failed to ingest box objects: %s", 
+                RCLCPP_WARN(this->get_logger(), "[yolo] Failed to ingest box objects: %s",
                             sl::toString(result).c_str());
                 return;
             }
-            
+
             result = zed_interface.cam.retrieveObjects(out_objs, object_tracker_parameters_rt);
             if (result != sl::ERROR_CODE::SUCCESS) {
-                RCLCPP_WARN(this->get_logger(), "[yolo] Failed to retrieve objects: %s", 
+                RCLCPP_WARN(this->get_logger(), "[yolo] Failed to retrieve objects: %s",
                             sl::toString(result).c_str());
                 return;
             }
 
             auto end = std::chrono::system_clock::now();
             auto tc = (double)std::chrono::duration_cast<std::chrono::microseconds>(end - start).count() / 1000.0;
-            
-            // publish detections in pointcloud
+
             usv_interfaces::msg::ObjectList detections = objs2markers(out_objs);
-            
-            // Add the tracking UUIDs to the output object list
-            // for (size_t i = 0; i < detections.obj_list.size() && i < tracked_dets.boxes.size(); ++i) {
-            //     if (!tracked_dets.boxes[i].uuid.empty()) {
-            //         detections.obj_list[i].uuid = tracked_dets.boxes[i].uuid;
-            //     }
-            // }
-            
             this->yolo_pub->publish(detections);
 
-            RCLCPP_DEBUG(this->get_logger(), "[yolo] pointcloud estimation done: %2.4lf ms [%ld]", 
+            RCLCPP_DEBUG(this->get_logger(), "[yolo] pointcloud estimation done: %2.4lf ms [%ld]",
                         tc, detections.obj_list.size());
         } catch (const std::exception& e) {
             RCLCPP_ERROR(this->get_logger(), "[yolo] error processing detections: %s", e.what());
@@ -661,65 +730,8 @@ void receive_shapes(const usv_interfaces::msg::ZbboxArray::SharedPtr dets) {
             // BLACK
 
             usv_interfaces::msg::Object obj;
-            switch (det.label) {
-                case 0:     // blue circle
-                    obj.color = 2;
-                    obj.type = "circle";
-                    break;
-                case 1:     // blue plus
-                    obj.color = 2;
-                    obj.type = "plus";
-                    break;
-                case 2:     // blue square
-                    obj.color = 2;
-                    obj.type = "square";
-                    break;
-                case 3:     // blue triangle
-                    obj.color = 2;
-                    obj.type = "triangle";
-                    break;
-                case 4:     // duck
-                    obj.color = 3;
-                    obj.type = "duck";
-                    break;
-                case 5:     // green circle
-                    obj.color = 1;
-                    obj.type = "circle";
-                    break;
-                case 6:     // green plus
-                    obj.color = 1;
-                    obj.type = "plus";
-                    break;
-                case 7:     // green square
-                    obj.color = 1;
-                    obj.type = "square";
-                    break;
-                case 8:     // green triangle
-                    obj.color = 1;
-                    obj.type = "triangle";
-                    break;
-                case 9:     // red circle
-                    obj.color = 0;
-                    obj.type = "circle";
-                    break;
-                case 10:    // red plus
-                    obj.color = 0;
-                    obj.type = "plus";
-                    break;
-                case 11:    // red square
-                    obj.color = 0;
-                    obj.type = "square";
-                    break;
-                case 12:    // red triangle
-                    obj.color = 0;
-                    obj.type = "triangle";
-                    break;
-                default:
-                    obj.color = -1;
-                    obj.type = "ignore";
-                    break;
-            }
-            
+            map_shapes_label(det.label, obj);
+
             obj.x = position[0];
             obj.y = position[1];
             
@@ -737,29 +749,90 @@ void receive_shapes(const usv_interfaces::msg::ZbboxArray::SharedPtr dets) {
 #ifdef USE_ZED_SDK
     else {
         // real-life mode using ZED SDK
+
+        if (!zed_interface.object_detection_enabled) {
+            // ZED 1: Use cached depth map (retrieved in frame_send)
+            if (!depth_valid) {
+                RCLCPP_DEBUG(this->get_logger(), "[shapes] ZED 1: no valid depth map cached");
+                return;
+            }
+
+            usv_interfaces::msg::ObjectList detections;
+            int img_w = cached_depth_sl.getWidth();
+            int img_h = cached_depth_sl.getHeight();
+            
+            for (const auto& det : dets->boxes) {
+                // Get center of bounding box
+                int cx = std::clamp((det.x0 + det.x1) / 2, 0, img_w - 1);
+                int cy = std::clamp((det.y0 + det.y1) / 2, 0, img_h - 1);
+                
+                // Simple depth lookup at center point
+                float depth = 0.0f;
+                cached_depth_sl.getValue(cx, cy, &depth);
+                
+                // If center invalid, try a few nearby points
+                if (!std::isfinite(depth) || depth < 0.3f || depth > 20.0f) {
+                    float sum = 0.0f;
+                    int count = 0;
+                    for (int dy = -5; dy <= 5; dy += 5) {
+                        for (int dx = -5; dx <= 5; dx += 5) {
+                            int px = std::clamp(cx + dx, 0, img_w - 1);
+                            int py = std::clamp(cy + dy, 0, img_h - 1);
+                            float d;
+                            cached_depth_sl.getValue(px, py, &d);
+                            if (std::isfinite(d) && d > 0.3f && d < 20.0f) {
+                                sum += d;
+                                count++;
+                            }
+                        }
+                    }
+                    depth = (count > 0) ? sum / count : 0.0f;
+                }
+                
+                usv_interfaces::msg::Object obj;
+                map_shapes_label(det.label, obj);
+
+                // Convert pixel + depth to 3D using cached intrinsics
+                // LEFT_HANDED_Z_UP: X=forward, Y=right, Z=up
+                float cam_x = (static_cast<float>(cx) - cached_cx) * depth / cached_fx;
+                float cam_z = depth;
+
+                obj.x = cam_z;    // depth → forward (X)
+                obj.y = cam_x;    // camera right → right (Y)
+                
+                if (!std::isfinite(obj.x) || !std::isfinite(obj.y) || depth == 0.0f) {
+                    obj.x = 0.0;
+                    obj.y = 0.0;
+                    obj.type = "ignore";
+                }
+                
+                detections.obj_list.push_back(obj);
+            }
+
+            // Pad to 10 objects to match objs2markers_shapes output
+            while (detections.obj_list.size() < 10) {
+                usv_interfaces::msg::Object pad;
+                pad.color = -1; pad.x = 0; pad.y = 0; pad.type = "ignore";
+                detections.obj_list.push_back(pad);
+            }
+
+            this->shapes_pub->publish(detections);
+            return;
+        }
+
+        // ZED 2i+ path: use SDK object detection
         std::vector<sl::CustomBoxObjectData> dets_sl;
-        
-        // convert from ros message to global format
         to_sl(dets_sl, dets);
 
         auto start = std::chrono::system_clock::now();
 
-        // send to zed sdk (only if object detection is enabled - not available on ZED 1)
         sl::Objects out_objs;
-        
-        if (!zed_interface.object_detection_enabled) {
-            // ZED 1: Skip ZED SDK object detection
-            RCLCPP_DEBUG(this->get_logger(), "[shapes] ZED 1 mode - skipping 3D object detection");
-            return;
-        }
-        
         zed_interface.cam.ingestCustomBoxObjects(dets_sl);
         zed_interface.cam.retrieveObjects(out_objs, object_tracker_parameters_rt);
 
         auto end = std::chrono::system_clock::now();
         auto tc = (double)std::chrono::duration_cast<std::chrono::microseconds>(end - start).count() / 1000.0;
-        
-        // publish detections in pointcloud
+
         usv_interfaces::msg::ObjectList detections = objs2markers_shapes(out_objs);
         this->shapes_pub->publish(detections);
 
@@ -815,67 +888,7 @@ usv_interfaces::msg::ObjectList objs2markers_shapes(sl::Objects objs) {
             auto& obj = objs.object_list.at(i);
 
             usv_interfaces::msg::Object o;
-
-            int color = 0;
-
-            switch (obj.raw_label) {
-                case 0:     // blue circle
-                    o.color = 2;
-                    o.type = "circle";
-                    break;
-                case 1:     // blue plus
-                    o.color = 2;
-                    o.type = "plus";
-                    break;
-                case 2:     // blue square
-                    o.color = 2;
-                    o.type = "square";
-                    break;
-                case 3:     // blue triangle
-                    o.color = 2;
-                    o.type = "triangle";
-                    break;
-                case 4:     // duck
-                    o.color = 3;
-                    o.type = "duck";
-                    break;
-                case 5:     // green circle
-                    o.color = 1;
-                    o.type = "circle";
-                    break;
-                case 6:     // green plus
-                    o.color = 1;
-                    o.type = "plus";
-                    break;
-                case 7:     // green square
-                    o.color = 1;
-                    o.type = "square";
-                    break;
-                case 8:     // green triangle
-                    o.color = 1;
-                    o.type = "triangle";
-                    break;
-                case 9:     // red circle
-                    o.color = 0;
-                    o.type = "circle";
-                    break;
-                case 10:    // red plus
-                    o.color = 0;
-                    o.type = "plus";
-                    break;
-                case 11:    // red square
-                    o.color = 0;
-                    o.type = "square";
-                    break;
-                case 12:    // red triangle
-                    o.color = 0;
-                    o.type = "triangle";
-                    break;
-                default: // TODO
-                    color = -1;
-                    o.type = "ignore";
-                    break;
-            }
+            map_shapes_label(obj.raw_label, o);
 
             o.x = obj.position[0];
             if ( std::isnan(o.x) ) {
@@ -918,47 +931,9 @@ usv_interfaces::msg::ObjectList objs2markers(sl::Objects objs) {
             usv_interfaces::msg::Object o;
 
             // Set object UUID from ZED tracking ID
-            // This will be overwritten later with ByteTrack UUID if available
             o.uuid = std::to_string(obj.id);
 
-            switch (obj.raw_label) {
-                case 0:  // black
-                    o.color = 4;
-                    o.type = "round";
-                    break;
-                case 1:  // blue
-                    o.color = 2;
-                    o.type = "round";
-                    break;
-                case 2: // course marker
-                    o.color = 4;
-                    o.type = "marker";
-                    break;
-                case 3: // green
-                    o.color = 1;
-                    o.type = "round";
-                    break;
-                case 4: // red marker
-                    o.color = 0;
-                    o.type = "marker";
-                    break;
-                case 5: // red
-                    o.color = 0;
-                    o.type = "round";
-                    break;
-                case 6: // green marker
-                    o.color = 1;
-                    o.type = "marker";
-                    break;
-                case 7: // yellow
-                    o.color = 3;
-                    o.type = "round";
-                    break;
-                default: // TODO
-                    o.color = -1;
-                    o.type = "ignore";
-                    break;
-            }
+            map_yolo_label(obj.raw_label, o);
 
             o.x = obj.position[0];
             if (std::isnan(o.x)) {
@@ -1187,7 +1162,8 @@ DetectorInterface()
     if (!simulation_mode) {
         timer = this->create_wall_timer(
                 std::chrono::milliseconds(frame_interval),
-                std::bind(&DetectorInterface::frame_send, this)
+                std::bind(&DetectorInterface::frame_send, this),
+                r_group
             );
     }
     
