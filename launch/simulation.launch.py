@@ -17,7 +17,7 @@ def generate_launch_description():
         name='yolo',
         output='screen',
         parameters=[
-            {'engine_path': '/home/vanttec/vanttec_usv/RB2025v2.engine'},
+            {'engine_path': '/home/max/vanttec_usv/SARASOTA.engine'},
             {'video_topic': '/bebblebrox/video'},
             {'output_topic': '/bebblebrox/detections'},
             {'threshold': 0.5},

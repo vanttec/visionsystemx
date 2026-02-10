@@ -122,7 +122,7 @@ private:
 public:
     YoloDetector() : Node("yolo")
     {
-        this->declare_parameter("engine_path", "/home/vanttec/vanttec_usv/SARASOTA.engine");
+        this->declare_parameter("engine_path", "/home/max/vanttec_usv/SARASOTA.engine");
         engine_path = this->get_parameter("engine_path").as_string();
 
         this->declare_parameter("video_topic", "/beeblebrox/video");

@@ -1,11 +1,17 @@
 from launch import LaunchDescription
-from launch.actions import IncludeLaunchDescription
+from launch.actions import IncludeLaunchDescription, DeclareLaunchArgument
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import PathJoinSubstitution
+from launch.substitutions import PathJoinSubstitution, LaunchConfiguration
 from launch_ros.substitutions import FindPackageShare
 from launch_ros.actions import Node
 
 def generate_launch_description():
+    camera_model_arg = DeclareLaunchArgument(
+        'camera_model',
+        default_value='zed2i',
+        description='ZED camera model to use: "zed" or "zed1" for ZED 1, "zed2i" for ZED 2i'
+    )
+    camera_model = LaunchConfiguration('camera_model')
     velodyne = IncludeLaunchDescription(
         PythonLaunchDescriptionSource([
             PathJoinSubstitution([
@@ -47,6 +53,8 @@ def generate_launch_description():
         name='beeblebrox',
         output='screen',
         parameters=[
+            # Camera model: "zed" or "zed1" for ZED 1, "zed2i" for ZED 2i
+            {'camera_model': camera_model},
             # Real-life mode flag
             {'simulation_mode': False},
             # Standard parameters
@@ -63,9 +71,10 @@ def generate_launch_description():
     )
     
     return LaunchDescription([
+        camera_model_arg,
         video_feed,
-        yolo_tensorrt,
-        velodyne,
+        # yolo_tensorrt,
+        # velodyne,
         # fusion,
         # rviz,
         # rqt,
