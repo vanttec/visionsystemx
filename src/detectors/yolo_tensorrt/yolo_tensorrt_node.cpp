@@ -16,12 +16,12 @@ const std::vector<std::string> NAMES {
 	"black_buoy",
 	"blue_buoy",
 	"course_marker",
-	"port_marker",
-	"starboard_marker",
-	"yellow_marker",
-    "blue_circle",
+    "green_buoy",
 	"blue_cross",
-    "blue_square"
+    "red_buoy",
+    "blue_circle",
+	"yellow_marker",
+    "blue_square",
 	"blue_triangle",
 	"green_circle",
 	"green_cross",
@@ -31,8 +31,8 @@ const std::vector<std::string> NAMES {
 	"red_cross",
 	"red_square",
 	"red_triangle",
-    "green_buoy",
-    "red_buoy"
+    "starboard_marker",
+    "port_marker"
 };
 
 const std::vector<std::vector<unsigned int>> COLORS {
@@ -122,10 +122,10 @@ private:
 public:
     YoloDetector() : Node("yolo")
     {
-        this->declare_parameter("engine_path", "/home/max/vanttec_usv/SARASOTA.engine");
+        this->declare_parameter("engine_path", "/home/asv/vanttec_usv/src/visionsystemx/data/SARASOTA.engine");
         engine_path = this->get_parameter("engine_path").as_string();
 
-        this->declare_parameter("video_topic", "/beeblebrox/video");
+        this->declare_parameter("video_topic", "/bebblebrox/video");
         video_topic = this->get_parameter("video_topic").as_string();
 
         this->declare_parameter("output_topic", "/yolo/detections");

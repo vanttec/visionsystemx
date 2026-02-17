@@ -38,13 +38,19 @@ def generate_launch_description():
         name='yolo',
         output='screen',
         parameters=[
-            {'engine_path': '/home/vanttec/vanttec_usv/SARASOTA.engine'},
+            {'engine_path': '/home/asv/vanttec_usv/src/visionsystemx/data/SARASOTA.engine'},
             {'video_topic': '/bebblebrox/video'},
             {'output_topic': '/yolo/detections'},
-            {'threshold': 0.5},
+            {'threshold': 0.2},
         ],
         # ros debug printing
-        # arguments=['--ros-args', '--log-level', 'DEBUG']
+        arguments=[
+            '--ros-args', 
+            '--log-level', 'DEBUG',
+            '-p', 'image_transport.compressed.jpeg_quality:=60',
+            '-p', 'image_transport.ffmpeg.preset:=ultrafast',
+            '-p', 'image_transport.ffmpeg.tune:=zerolatency'
+        ],
     )
     
     video_feed = Node(
@@ -71,9 +77,9 @@ def generate_launch_description():
     )
     
     return LaunchDescription([
-        camera_model_arg,
-        video_feed,
-        # yolo_tensorrt,
+        # camera_model_arg,
+        # video_feed,
+        yolo_tensorrt,
         # velodyne,
         # fusion,
         # rviz,
