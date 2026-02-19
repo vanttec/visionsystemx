@@ -585,7 +585,7 @@ void YOLOv8::draw_objects(
 
         // Prepare label text with confidence score
 
-        std::string label_text = cv::format("%s %d%%)",
+        std::string label_text = cv::format("%s %d%%",
             CLASS_NAMES[obj.label].c_str(), (int)(obj.prob*100.0));
 
         // Calculate text size and position
