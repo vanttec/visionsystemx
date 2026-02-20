@@ -435,30 +435,35 @@ void YOLOv8::copy_from_Mat(const cv::Mat& image, const cv::Size& size)
     );
     
     if (err != cudaSuccess) {
-        RCLCPP_ERROR(this->logger, "Failed to copy input data to device: %s", cudaGetErrorString(err));
-        throw std::runtime_error("CUDA memcpy failed");
+        RCLCPP_ERROR(this->logger, "Failed to copy input data to device: %s", cudaGetErrorString(err));        throw std::runtime_error("CUDA memcpy failed");
     }
 }
 
 void YOLOv8::infer()
 {
-    // Create a vector of device buffer pointers for execution bindings
-    std::vector<void*> bindings;
+    // 1) Set tensor addresses (name-based)
     for (const auto& name : inputNames) {
-        bindings.push_back(tensors[name].deviceBuffer);
+        if (!this->context->setTensorAddress(name.c_str(), tensors[name].deviceBuffer)) {
+            RCLCPP_ERROR(this->logger, "Failed to setTensorAddress for input: %s", name.c_str());
+            throw std::runtime_error("setTensorAddress failed (input)");
+        }
     }
+
     for (const auto& name : outputNames) {
-        bindings.push_back(tensors[name].deviceBuffer);
+        if (!this->context->setTensorAddress(name.c_str(), tensors[name].deviceBuffer)) {
+            RCLCPP_ERROR(this->logger, "Failed to setTensorAddress for output: %s", name.c_str());
+            throw std::runtime_error("setTensorAddress failed (output)");
+        }
     }
-    
-    // Execute inference
-    bool status = this->context->executeV2(bindings.data());
+
+    // 2) Enqueue inference (TRT 10+)
+    bool status = this->context->enqueueV3(this->stream);
     if (!status) {
-        RCLCPP_ERROR(this->logger, "TensorRT inference failed");
-        throw std::runtime_error("TensorRT inference failed");
+        RCLCPP_ERROR(this->logger, "TensorRT inference failed (enqueueV3)");
+        throw std::runtime_error("TensorRT inference failed (enqueueV3)");
     }
-    
-    // Copy output data from device to host
+
+    // 3) Copy outputs device -> host
     for (const auto& name : outputNames) {
         auto& tensor = tensors[name];
         cudaError_t err = cudaMemcpyAsync(
@@ -468,20 +473,21 @@ void YOLOv8::infer()
             cudaMemcpyDeviceToHost,
             this->stream
         );
-        
+
         if (err != cudaSuccess) {
-            RCLCPP_ERROR(this->logger, "Failed to copy output data from device: %s", cudaGetErrorString(err));
-            throw std::runtime_error("CUDA memcpy failed");
+            RCLCPP_ERROR(this->logger, "Failed to copy output %s: %s", name.c_str(), cudaGetErrorString(err));
+            throw std::runtime_error("CUDA memcpy failed (output)");
         }
     }
-    
-    // Synchronize to ensure all operations are complete
+
+    // 4) Sync
     cudaError_t err = cudaStreamSynchronize(this->stream);
     if (err != cudaSuccess) {
         RCLCPP_ERROR(this->logger, "CUDA stream synchronize failed: %s", cudaGetErrorString(err));
         throw std::runtime_error("CUDA stream synchronize failed");
     }
 }
+
 
 usv_interfaces::msg::ZbboxArray YOLOv8::postprocess()
 {
@@ -578,8 +584,9 @@ void YOLOv8::draw_objects(
         cv::rectangle(res, rect, color, 2);
 
         // Prepare label text with confidence score
-        std::string label_text = cv::format("%s %.1f%%",
-            CLASS_NAMES[obj.label].c_str(), obj.prob * 100);
+
+        std::string label_text = cv::format("%s %d%%",
+            CLASS_NAMES[obj.label].c_str(), (int)(obj.prob*100.0));
 
         // Calculate text size and position
         int baseline = 0;

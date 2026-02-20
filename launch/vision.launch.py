@@ -4,6 +4,7 @@ from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import PathJoinSubstitution, LaunchConfiguration
 from launch_ros.substitutions import FindPackageShare
 from launch_ros.actions import Node
+import os
 
 def generate_launch_description():
     camera_model_arg = DeclareLaunchArgument(
@@ -38,13 +39,19 @@ def generate_launch_description():
         name='yolo',
         output='screen',
         parameters=[
-            {'engine_path': '/home/vanttec/vanttec_usv/SARASOTA.engine'},
+            {'engine_path': os.path.expanduser('~/vanttec_usv/src/visionsystemx/data/SARASOTA.engine')},
             {'video_topic': '/bebblebrox/video'},
             {'output_topic': '/yolo/detections'},
-            {'threshold': 0.5},
+            {'threshold': 0.2},
         ],
         # ros debug printing
-        # arguments=['--ros-args', '--log-level', 'DEBUG']
+        arguments=[
+            '--ros-args', 
+            '--log-level', 'DEBUG',
+            '-p', 'image_transport.compressed.jpeg_quality:=60',
+            '-p', 'image_transport.ffmpeg.preset:=ultrafast',
+            '-p', 'image_transport.ffmpeg.tune:=zerolatency'
+        ],
     )
     
     video_feed = Node(
