@@ -93,10 +93,10 @@ def generate_launch_description():
     return LaunchDescription([
         camera_model_arg,
         video_feed,
-        yolo_primary,
+        # yolo_primary,
         # yolo_secondary,
-        velodyne,
-        fusion,
+        # velodyne,
+        # fusion,
         # rviz,
         # rqt,
     ])

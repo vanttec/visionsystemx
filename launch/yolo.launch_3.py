@@ -1,4 +1,3 @@
-
 from launch import LaunchDescription
 from launch.actions import IncludeLaunchDescription, DeclareLaunchArgument
 from launch.launch_description_sources import PythonLaunchDescriptionSource
@@ -91,12 +90,12 @@ def generate_launch_description():
     )
     
     return LaunchDescription([
-        camera_model_arg,
-        video_feed,
-        yolo_primary,
-        # yolo_secondary,
-        velodyne,
-        fusion,
+        # camera_model_arg,
+        # video_feed,
+        # yolo_primary,
+        yolo_secondary,
+        # velodyne,
+        # fusion,
         # rviz,
         # rqt,
     ])

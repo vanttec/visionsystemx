@@ -94,9 +94,9 @@ def generate_launch_description():
         camera_model_arg,
         video_feed,
         yolo_primary,
-        # yolo_secondary,
-        velodyne,
-        fusion,
+        yolo_secondary,
+        # velodyne,
+        # fusion,
         # rviz,
         # rqt,
     ])
