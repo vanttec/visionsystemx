@@ -440,6 +440,10 @@ void YOLOv8::draw_objects(
 
         std::string label_text = cv::format("%s %d%%", CLASS_NAMES[obj.label].c_str(), (int)(obj.prob*100.0));
 
+        std::string label_text = cv::format("%s %d%%",
+            CLASS_NAMES[obj.label].c_str(), (int)(obj.prob*100.0));
+
+        // Calculate text size and position
         int baseline = 0;
         cv::Size label_size = cv::getTextSize(label_text, cv::FONT_HERSHEY_SIMPLEX, 0.4, 1, &baseline);
 

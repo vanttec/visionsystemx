@@ -26,15 +26,8 @@ ZED_usv::ZED_usv(rclcpp::Logger logger_param, const std::string& camera_model) :
     bool is_zed1 = (camera_model == "zed" || camera_model == "zed1");
     RCLCPP_INFO(this->logger, "Initializing camera model: %s", camera_model.c_str());
 
-    // OPTIMIZED SETTINGS FOR JETSON ORIN NX AND NANO - USB STABILITY FIX
-
-    init_params.sdk_verbose = true;  // ORIGINAL
-    // init_params.sdk_verbose = false;    // OPTIMIZED
-    
-
-    init_params.depth_mode = sl::DEPTH_MODE::ULTRA;        // ORIGINAL
-    // init_params.depth_mode = sl::DEPTH_MODE::NEURAL_LIGHT;   // OPTIMIZED
-    
+    init_params.sdk_verbose = true;
+    init_params.depth_mode = sl::DEPTH_MODE::NEURAL; // Ultra is deprecated in newest sdk
     init_params.coordinate_system = sl::COORDINATE_SYSTEM::LEFT_HANDED_Z_UP;
     init_params.coordinate_units = sl::UNIT::METER;
     init_params.depth_maximum_distance = 20;

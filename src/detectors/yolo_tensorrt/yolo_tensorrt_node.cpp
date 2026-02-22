@@ -16,12 +16,12 @@ const std::vector<std::string> NAMES {
 	"black_buoy",
 	"blue_buoy",
 	"course_marker",
-	"port_marker",
-	"starboard_marker",
-	"yellow_marker",
-    "blue_circle",
-	"blue_cross",
-    "blue_square"
+    "green_buoy",
+    "port_marker",
+    "red_buoy",
+    "starboard_marker",
+    "yellow_marker",
+    "blue_square",
 	"blue_triangle",
 	"green_circle",
 	"green_cross",
@@ -31,8 +31,8 @@ const std::vector<std::string> NAMES {
 	"red_cross",
 	"red_square",
 	"red_triangle",
-    "green_buoy",
-    "red_buoy"
+    "blue_circle",
+    "blue_cross"
 };
 
 const std::vector<std::vector<unsigned int>> COLORS {

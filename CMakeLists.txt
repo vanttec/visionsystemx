@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.8)
 
 include(CMakePrintHelpers)
 
-set(CMAKE_CUDA_ARCHITECTURES 60 61 62 70 72 75 86)
+set(CMAKE_CUDA_ARCHITECTURES 86 87 89)
 set(CMAKE_CUDA_COMPILER /usr/local/cuda/bin/nvcc)
 
 project(visionsystemx LANGUAGES C CXX CUDA)
@@ -29,8 +29,11 @@ find_package(pcl_conversions REQUIRED)
 find_package(message_filters REQUIRED)
 find_package(Eigen3 REQUIRED)
 
-set(TensorRT_INCLUDE_DIRS /usr/include/aarch64-linux-gnu)
-set(TensorRT_LIBRARIES /usr/lib/aarch64-linux-gnu)
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64")
+  set(ARCH_INCLUDE_PATH /usr/include/aarch64-linux-gnu)
+else()
+  set(ARCH_INCLUDE_PATH /usr/include/x86_64-linux-gnu)
+endif()
 
 add_executable(beeblebrox src/beeblebrox.cpp)
 
@@ -44,7 +47,7 @@ add_executable(yolo src/detectors/yolo_tensorrt/yolo_tensorrt_node.cpp)
 ament_target_dependencies(yolo
   rclcpp std_msgs OpenCV cv_bridge image_transport CUDA ZED usv_interfaces
 )
-target_include_directories(yolo PRIVATE ${CUDA_INCLUDE_DIRS})
+target_include_directories(yolo PRIVATE ${ARCH_INCLUDE_PATH} ${CUDA_INCLUDE_DIRS})
 target_link_libraries(yolo ${CUDA_LIBRARIES} ${TensorRT_LIBRARIES} nvinfer nvinfer_plugin)
 
 add_executable(lidar src/lidar/translation.cpp)
