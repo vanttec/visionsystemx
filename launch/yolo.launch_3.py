@@ -1,11 +1,9 @@
-
 from launch import LaunchDescription
 from launch.actions import IncludeLaunchDescription, DeclareLaunchArgument
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import PathJoinSubstitution, LaunchConfiguration
 from launch_ros.substitutions import FindPackageShare
 from launch_ros.actions import Node
-import os
 
 def generate_launch_description():
     camera_model_arg = DeclareLaunchArgument(
@@ -90,28 +88,14 @@ def generate_launch_description():
         package='visionsystemx',
         executable='lidar_camera.py'
     )
-
-    # Republish raw image as compressed for the web dashboard (rosbridge).
-    # Doesn't affect anything else
-    image_republish = Node(
-        package='image_transport',
-        executable='republish',
-        name='image_republish',
-        arguments=['raw', 'compressed'],
-        remappings=[
-            ('in',              '/bebblebrox/video/image'),
-            ('out/compressed',  '/bebblebrox/video/compressed'),
-        ],
-        output='screen',
-    )
-
+    
     return LaunchDescription([
-        camera_model_arg,
-        video_feed,
-        yolo_primary,
-        # yolo_secondary,
-        velodyne,
-        fusion,
+        # camera_model_arg,
+        # video_feed,
+        # yolo_primary,
+        yolo_secondary,
+        # velodyne,
+        # fusion,
         # rviz,
         # rqt,
     ])
