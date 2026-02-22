@@ -35,6 +35,10 @@
 #include <cuda.h>
 #include <cuda_runtime_api.h>
 
+// yaml
+#include <map>
+#include <yaml-cpp/yaml.h>
+
 // local headers
 #include "bytetrack.hpp"
 #ifdef USE_ZED_SDK
@@ -101,7 +105,7 @@ private:
 
     // final detections publishers
     rclcpp::Publisher<usv_interfaces::msg::ObjectList>::SharedPtr yolo_pub;
-    rclcpp::Publisher<usv_interfaces::msg::ObjectList>::SharedPtr shapes_pub;
+    rclcpp::Publisher<usv_interfaces::msg::ObjectList>::SharedPtr secondary_pub;
 
     // image_transport publisher
     image_transport::Publisher ip;
@@ -112,7 +116,7 @@ private:
 
     // receiver of boundingboxes
     rclcpp::Subscription<usv_interfaces::msg::ZbboxArray>::SharedPtr yolo_sub;
-    rclcpp::Subscription<usv_interfaces::msg::ZbboxArray>::SharedPtr shapes_sub;
+    rclcpp::Subscription<usv_interfaces::msg::ZbboxArray>::SharedPtr secondary_sub;
     
     // pointcloud subscriber for simulation
     rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr pointcloud_sub;
@@ -156,36 +160,31 @@ private:
     int img_width = 640;
     int img_height = 480;
 
-static void map_yolo_label(int label, usv_interfaces::msg::Object& obj) {
-    switch (label) {
-        case 0:  obj.color = 4; obj.type = "round";  break; // black
-        case 1:  obj.color = 2; obj.type = "round";  break; // blue
-        case 2:  obj.color = 4; obj.type = "marker"; break; // course marker
-        case 3:  obj.color = 1; obj.type = "round";  break; // green
-        case 4:  obj.color = 0; obj.type = "marker"; break; // red marker
-        case 5:  obj.color = 0; obj.type = "round";  break; // red
-        case 6:  obj.color = 1; obj.type = "marker"; break; // green marker
-        case 7:  obj.color = 3; obj.type = "round";  break; // yellow
-        default: obj.color = -1; obj.type = "ignore"; break;
+// class map: label -> (color, type)
+std::map<int, std::pair<int, std::string>> primary_class_map;
+std::map<int, std::pair<int, std::string>> secondary_class_map;
+
+static std::map<int, std::pair<int, std::string>> load_class_map(const std::string& yaml_path) {
+    std::map<int, std::pair<int, std::string>> m;
+    YAML::Node config = YAML::LoadFile(yaml_path);
+    for (const auto& entry : config["classes"]) {
+        int label = entry["label"].as<int>();
+        int color = entry["color"].as<int>();
+        std::string type = entry["type"].as<std::string>();
+        m[label] = {color, type};
     }
+    return m;
 }
 
-static void map_shapes_label(int label, usv_interfaces::msg::Object& obj) {
-    switch (label) {
-        case 0:  obj.color = 2; obj.type = "circle";   break; // blue circle
-        case 1:  obj.color = 2; obj.type = "plus";      break; // blue plus
-        case 2:  obj.color = 2; obj.type = "square";    break; // blue square
-        case 3:  obj.color = 2; obj.type = "triangle";  break; // blue triangle
-        case 4:  obj.color = 3; obj.type = "duck";      break; // duck
-        case 5:  obj.color = 1; obj.type = "circle";    break; // green circle
-        case 6:  obj.color = 1; obj.type = "plus";      break; // green plus
-        case 7:  obj.color = 1; obj.type = "square";    break; // green square
-        case 8:  obj.color = 1; obj.type = "triangle";  break; // green triangle
-        case 9:  obj.color = 0; obj.type = "circle";    break; // red circle
-        case 10: obj.color = 0; obj.type = "plus";      break; // red plus
-        case 11: obj.color = 0; obj.type = "square";    break; // red square
-        case 12: obj.color = 0; obj.type = "triangle";  break; // red triangle
-        default: obj.color = -1; obj.type = "ignore";    break;
+static void apply_class_map(const std::map<int, std::pair<int, std::string>>& class_map,
+                            int label, usv_interfaces::msg::Object& obj) {
+    auto it = class_map.find(label);
+    if (it != class_map.end()) {
+        obj.color = it->second.first;
+        obj.type = it->second.second;
+    } else {
+        obj.color = -1;
+        obj.type = "ignore";
     }
 }
 
@@ -561,7 +560,7 @@ void receive_yolo(const usv_interfaces::msg::ZbboxArray::SharedPtr dets) {
             RCLCPP_INFO(this->get_logger(), "[yolo] debug label: %ld", det.label);
 
             usv_interfaces::msg::Object obj;
-            map_yolo_label(det.label, obj);
+            apply_class_map(primary_class_map, det.label, obj);
 
             obj.x = position[0];
             obj.y = position[1];
@@ -627,7 +626,7 @@ void receive_yolo(const usv_interfaces::msg::ZbboxArray::SharedPtr dets) {
                     }
                     
                     usv_interfaces::msg::Object obj;
-                    map_yolo_label(det.label, obj);
+                    apply_class_map(primary_class_map, det.label, obj);
 
                     // Convert pixel + depth to 3D using cached intrinsics
                     // LEFT_HANDED_Z_UP: X=forward, Y=right, Z=up
@@ -705,16 +704,16 @@ void receive_yolo(const usv_interfaces::msg::ZbboxArray::SharedPtr dets) {
 }
 
 /***
- * callback for detections (shapes)
- * @param dets: shapes detections
+ * callback for detections (secondary yolo)
+ * @param dets: secondary yolo detections
 ***/
-void receive_shapes(const usv_interfaces::msg::ZbboxArray::SharedPtr dets) {
+void receive_secondary(const usv_interfaces::msg::ZbboxArray::SharedPtr dets) {
     if (!dets || dets->boxes.empty()) {
-        RCLCPP_DEBUG(this->get_logger(), "[shapes] received empty detection message");
+        RCLCPP_DEBUG(this->get_logger(), "[secondary] received empty detection message");
         return;
     }
     
-    RCLCPP_DEBUG(this->get_logger(), "[shapes] received detections: %ld", dets->boxes.size());
+    RCLCPP_DEBUG(this->get_logger(), "[secondary] received detections: %ld", dets->boxes.size());
     
     if (simulation_mode) {
         // process detections in simulation mode
@@ -730,7 +729,7 @@ void receive_shapes(const usv_interfaces::msg::ZbboxArray::SharedPtr dets) {
             // BLACK
 
             usv_interfaces::msg::Object obj;
-            map_shapes_label(det.label, obj);
+            apply_class_map(secondary_class_map, det.label, obj);
 
             obj.x = position[0];
             obj.y = position[1];
@@ -744,7 +743,7 @@ void receive_shapes(const usv_interfaces::msg::ZbboxArray::SharedPtr dets) {
             detections.obj_list.push_back(obj);
         }
         
-        this->shapes_pub->publish(detections);
+        this->secondary_pub->publish(detections);
     }
 #ifdef USE_ZED_SDK
     else {
@@ -753,7 +752,7 @@ void receive_shapes(const usv_interfaces::msg::ZbboxArray::SharedPtr dets) {
         if (!zed_interface.object_detection_enabled) {
             // ZED 1: Use cached depth map (retrieved in frame_send)
             if (!depth_valid) {
-                RCLCPP_DEBUG(this->get_logger(), "[shapes] ZED 1: no valid depth map cached");
+                RCLCPP_DEBUG(this->get_logger(), "[secondary] ZED 1: no valid depth map cached");
                 return;
             }
 
@@ -790,7 +789,7 @@ void receive_shapes(const usv_interfaces::msg::ZbboxArray::SharedPtr dets) {
                 }
                 
                 usv_interfaces::msg::Object obj;
-                map_shapes_label(det.label, obj);
+                apply_class_map(secondary_class_map, det.label, obj);
 
                 // Convert pixel + depth to 3D using cached intrinsics
                 // LEFT_HANDED_Z_UP: X=forward, Y=right, Z=up
@@ -809,14 +808,14 @@ void receive_shapes(const usv_interfaces::msg::ZbboxArray::SharedPtr dets) {
                 detections.obj_list.push_back(obj);
             }
 
-            // Pad to 10 objects to match objs2markers_shapes output
+            // Pad to 10 objects
             while (detections.obj_list.size() < 10) {
                 usv_interfaces::msg::Object pad;
                 pad.color = -1; pad.x = 0; pad.y = 0; pad.type = "ignore";
                 detections.obj_list.push_back(pad);
             }
 
-            this->shapes_pub->publish(detections);
+            this->secondary_pub->publish(detections);
             return;
         }
 
@@ -833,10 +832,10 @@ void receive_shapes(const usv_interfaces::msg::ZbboxArray::SharedPtr dets) {
         auto end = std::chrono::system_clock::now();
         auto tc = (double)std::chrono::duration_cast<std::chrono::microseconds>(end - start).count() / 1000.0;
 
-        usv_interfaces::msg::ObjectList detections = objs2markers_shapes(out_objs);
-        this->shapes_pub->publish(detections);
+        usv_interfaces::msg::ObjectList detections = objs2markers_secondary(out_objs);
+        this->secondary_pub->publish(detections);
 
-        RCLCPP_DEBUG(this->get_logger(), "[shapes] pointcloud estimation done: %2.4lf ms [%ld]", tc, detections.obj_list.size());
+        RCLCPP_DEBUG(this->get_logger(), "[secondary] pointcloud estimation done: %2.4lf ms [%ld]", tc, detections.obj_list.size());
     }
 #endif
 }
@@ -880,7 +879,7 @@ void to_sl(std::vector<sl::CustomBoxObjectData>& sl_dets, const usv_interfaces::
  * @param objs: global format
  * @return ros message
 ***/
-usv_interfaces::msg::ObjectList objs2markers_shapes(sl::Objects objs) {
+usv_interfaces::msg::ObjectList objs2markers_secondary(sl::Objects objs) {
     usv_interfaces::msg::ObjectList ma;
 
     for (int i = 0; i < 10; i++) {
@@ -888,7 +887,7 @@ usv_interfaces::msg::ObjectList objs2markers_shapes(sl::Objects objs) {
             auto& obj = objs.object_list.at(i);
 
             usv_interfaces::msg::Object o;
-            map_shapes_label(obj.raw_label, o);
+            apply_class_map(secondary_class_map, obj.raw_label, o);
 
             o.x = obj.position[0];
             if ( std::isnan(o.x) ) {
@@ -933,7 +932,7 @@ usv_interfaces::msg::ObjectList objs2markers(sl::Objects objs) {
             // Set object UUID from ZED tracking ID
             o.uuid = std::to_string(obj.id);
 
-            map_yolo_label(obj.raw_label, o);
+            apply_class_map(primary_class_map, obj.raw_label, o);
 
             o.x = obj.position[0];
             if (std::isnan(o.x)) {
@@ -1050,12 +1049,23 @@ DetectorInterface()
         img_height = this->get_parameter("sim_height").as_int();
     }
     
+    // load class mappings from YAML config files
+    std::string config_dir = ament_index_cpp::get_package_share_directory("visionsystemx") + "/config/";
+    this->declare_parameter("primary_classes_config", config_dir + "primary_yolo_classes.yaml");
+    this->declare_parameter("secondary_classes_config", config_dir + "secondary_yolo_classes.yaml");
+    std::string primary_config = this->get_parameter("primary_classes_config").as_string();
+    std::string secondary_config = this->get_parameter("secondary_classes_config").as_string();
+    primary_class_map = load_class_map(primary_config);
+    secondary_class_map = load_class_map(secondary_config);
+    RCLCPP_INFO(this->get_logger(), "Loaded %ld primary classes, %ld secondary classes",
+                primary_class_map.size(), secondary_class_map.size());
+
     // final detections' topic
     this->declare_parameter("objects_yolo_topic", "/bebblebrox/objects/yolo");
     std::string objects_yolo_topic = this->get_parameter("objects_yolo_topic").as_string();
 
-    this->declare_parameter("objects_shapes_topic", "/bebblebrox/objects/shapes");
-    std::string objects_shapes_topic = this->get_parameter("objects_shapes_topic").as_string();
+    this->declare_parameter("objects_secondary_topic", "/bebblebrox/objects/secondary");
+    std::string objects_secondary_topic = this->get_parameter("objects_secondary_topic").as_string();
     
     // publisher's video topic
     this->declare_parameter("video_topic", "/bebblebrox/video");
@@ -1069,8 +1079,8 @@ DetectorInterface()
     this->declare_parameter("yolo_sub_topic", "/yolo/detections");
     std::string yolo_sub_topic = this->get_parameter("yolo_sub_topic").as_string();
 
-    this->declare_parameter("shapes_sub_topic", "/shapes/detections");
-    std::string shapes_sub_topic = this->get_parameter("shapes_sub_topic").as_string();
+    this->declare_parameter("secondary_sub_topic", "/yolo_secondary/detections");
+    std::string secondary_sub_topic = this->get_parameter("secondary_sub_topic").as_string();
     
     // pointcloud topic for simulation
     this->declare_parameter("pointcloud_topic", "/simulation/pointcloud");
@@ -1114,8 +1124,8 @@ DetectorInterface()
     // yolo's final detections publisher
     this->yolo_pub = this->create_publisher<usv_interfaces::msg::ObjectList>(objects_yolo_topic, 10);
 
-    // shapes' final detections publisher
-    this->shapes_pub = this->create_publisher<usv_interfaces::msg::ObjectList>(objects_shapes_topic, 10);
+    // secondary yolo's final detections publisher
+    this->secondary_pub = this->create_publisher<usv_interfaces::msg::ObjectList>(objects_secondary_topic, 10);
 
     // video publisher
     rclcpp::Node::SharedPtr nh(std::shared_ptr<DetectorInterface>(this, [](auto *) {}));
@@ -1141,10 +1151,10 @@ DetectorInterface()
             options
         );
     
-    this->shapes_sub = this->create_subscription<usv_interfaces::msg::ZbboxArray>(
-            shapes_sub_topic,
+    this->secondary_sub = this->create_subscription<usv_interfaces::msg::ZbboxArray>(
+            secondary_sub_topic,
             rclcpp::SystemDefaultsQoS(),
-            std::bind(&DetectorInterface::receive_shapes, this, _1),
+            std::bind(&DetectorInterface::receive_secondary, this, _1),
             options
         );
 

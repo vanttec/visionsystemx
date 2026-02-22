@@ -8,56 +8,12 @@
 #include "cv_bridge/cv_bridge.h"
 #include "opencv2/opencv.hpp"
 
+#include <yaml-cpp/yaml.h>
+#include "ament_index_cpp/get_package_share_directory.hpp"
+
 #include "yolo_tensorrt.hpp"
 
 using std::placeholders::_1;
-
-const std::vector<std::string> NAMES {
-	"black_buoy",
-	"blue_buoy",
-	"course_marker",
-	"port_marker",
-	"starboard_marker",
-	"yellow_marker",
-    "blue_circle",
-	"blue_cross",
-    "blue_square"
-	"blue_triangle",
-	"green_circle",
-	"green_cross",
-	"green_square",
-	"green_triangle",
-	"red_circle",
-	"red_cross",
-	"red_square",
-	"red_triangle",
-    "green_buoy",
-    "red_buoy"
-};
-
-const std::vector<std::vector<unsigned int>> COLORS {
-	{0, 0, 0},
-	{0, 0, 0},
-	{0, 0, 0},
-	{0, 0, 0},
-	{0, 0, 0},
-	{0, 0, 0},
-	{0, 0, 0},
-	{0, 0, 0},
-	{0, 0, 0},
-	{0, 0, 0},
-	{0, 0, 0},
-	{0, 0, 0},
-	{0, 0, 0},
-	{0, 0, 0},
-	{0, 0, 0},
-	{0, 0, 0},
-	{0, 0, 0},
-	{0, 0, 0},
-	{0, 0, 0},
-	{0, 0, 0},
-	{0, 0, 0}
-};
 
 template <typename E>
 class YoloDetector : public rclcpp::Node {
@@ -69,6 +25,9 @@ private:
     std::string output_topic;
     double threshold;
 
+    std::vector<std::string> class_names;
+    std::vector<std::vector<unsigned int>> class_colors;
+
     std::unique_ptr<E> detector_engine;
 
     // image transport objects
@@ -78,6 +37,28 @@ private:
 
     // publisher for detections
     std::shared_ptr<rclcpp::Publisher<usv_interfaces::msg::ZbboxArray>> dets;
+
+    void load_classes(const std::string& yaml_path) {
+        YAML::Node config = YAML::LoadFile(yaml_path);
+        const auto& classes = config["classes"];
+
+        // find max label to size the vectors
+        int max_label = 0;
+        for (const auto& entry : classes) {
+            int label = entry["label"].as<int>();
+            if (label > max_label) max_label = label;
+        }
+
+        class_names.resize(max_label + 1, "unknown");
+        class_colors.resize(max_label + 1, {0, 0, 0});
+
+        for (const auto& entry : classes) {
+            int label = entry["label"].as<int>();
+            class_names[label] = entry["name"].as<std::string>();
+        }
+
+        RCLCPP_INFO(this->get_logger(), "Loaded %ld classes from %s", classes.size(), yaml_path.c_str());
+    }
 
     void frame(const sensor_msgs::msg::Image::ConstSharedPtr &msg)
     {
@@ -90,7 +71,7 @@ private:
             cv::Mat img = cv_ptr->image;
 
             if (img.empty() || img.cols <= 0 || img.rows <= 0) {
-                RCLCPP_ERROR(this->get_logger(), "Empty or invalid image dimensions: %dx%d", 
+                RCLCPP_ERROR(this->get_logger(), "Empty or invalid image dimensions: %dx%d",
                             img.cols, img.rows);
                 return;
             }
@@ -109,7 +90,7 @@ private:
 
             // draw the detections on the image
             cv::Mat annotated;
-            detector_engine->draw_objects(img, annotated, objs, NAMES, COLORS);
+            detector_engine->draw_objects(img, annotated, objs, class_names, class_colors);
 
             // convert the annotated image back to a ROS image message
             auto annotated_msg = cv_bridge::CvImage(msg->header, "bgr8", annotated).toImageMsg();
@@ -135,6 +116,13 @@ public:
 
         this->declare_parameter("threshold", 0.1);
         threshold = this->get_parameter("threshold").as_double();
+
+        // load class names from YAML config
+        std::string default_config = ament_index_cpp::get_package_share_directory("visionsystemx")
+            + "/config/primary_yolo_classes.yaml";
+        this->declare_parameter("classes_config", default_config);
+        std::string classes_config = this->get_parameter("classes_config").as_string();
+        load_classes(classes_config);
 
         size = cv::Size{640, 640};
 
@@ -164,7 +152,7 @@ public:
         );
 
         // advertise the topic for the drawn (annotated) image
-        this->draw_pub = it->advertise("yolo/draw", 10);
+        this->draw_pub = it->advertise("draw", 10);
 
         RCLCPP_INFO(this->get_logger(), "-> yolo ready");
     }
@@ -188,6 +176,6 @@ int main(int argc, char **argv)
         std::cerr << "Fatal error: " << e.what() << std::endl;
         return 1;
     }
-    
+
     return 0;
 }

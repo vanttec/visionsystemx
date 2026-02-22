@@ -1,0 +1,11 @@
+# Secondary YOLO model class mapping (indicatoryolo8.engine - indicators)
+# color codes: 0=RED, 1=GREEN
+classes:
+  - label: 0
+    color: 1
+    type: "indicator"
+    name: "green_indicator"
+  - label: 1
+    color: 0
+    type: "indicator"
+    name: "red_indicator"

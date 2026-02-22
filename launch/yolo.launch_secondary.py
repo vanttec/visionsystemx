@@ -1,4 +1,3 @@
-
 from launch import LaunchDescription
 from launch.actions import IncludeLaunchDescription, DeclareLaunchArgument
 from launch.launch_description_sources import PythonLaunchDescriptionSource
@@ -34,7 +33,8 @@ def generate_launch_description():
     )
     
     shared_video_topic = '/bebblebrox/video'
-    
+    config_dir = PathJoinSubstitution([FindPackageShare('visionsystemx'), 'config'])
+
     # --- Instance 1: Primary (All buoys) ---
     yolo_primary = Node(
         package='visionsystemx',
@@ -44,10 +44,11 @@ def generate_launch_description():
         output='screen',
         parameters=[
             {'engine_path': '/home/asv/vanttec_usv/src/visionsystemx/data/SARASOTA.engine'},
-            {'threshold': 0.5}, # High threshold
+            {'threshold': 0.5},
+            {'classes_config': PathJoinSubstitution([config_dir, 'primary_yolo_classes.yaml'])},
         ],
         remappings=[
-            ('video', shared_video_topic), # Redirects local 'video' to the shared global topic
+            ('video', shared_video_topic),
         ]
     )
 
@@ -60,10 +61,11 @@ def generate_launch_description():
         output='screen',
         parameters=[
             {'engine_path': '/home/asv/vanttec_usv/src/visionsystemx/data/indicatoryolo8.engine'},
-            {'threshold': 0.5}, # Low threshold to catch faint objects
+            {'threshold': 0.5},
+            {'classes_config': PathJoinSubstitution([config_dir, 'secondary_yolo_classes.yaml'])},
         ],
         remappings=[
-            ('video', shared_video_topic), # Also points to the same shared topic
+            ('video', shared_video_topic),
         ]
     )
     
@@ -93,7 +95,7 @@ def generate_launch_description():
     return LaunchDescription([
         # camera_model_arg,
         # video_feed,
-        yolo_primary,
+        # yolo_primary,
         yolo_secondary,
         # velodyne,
         # fusion,

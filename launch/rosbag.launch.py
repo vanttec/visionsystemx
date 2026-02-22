@@ -50,9 +50,9 @@ def generate_launch_description():
             # Real-life mode flag
             {'simulation_mode': False},
             # Standard parameters
-            {'objects_shapes_topic': '/objects_docking'},
+            {'objects_secondary_topic': '/objects_docking'},
             {'video_topic': '/none'},
-            {'shapes_sub_topic': '/shapes/detections'},
+            {'secondary_sub_topic': '/shapes/detections'},
             {'frame_interval': 100}, # run every 100 ms  
         ],
         # arguments=['--ros-args', '--log-level', 'DEBUG']

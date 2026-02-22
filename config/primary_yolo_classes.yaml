@@ -1,0 +1,36 @@
+# Primary YOLO model class mapping (SARASOTA.engine - buoys)
+# color codes: 0=RED, 1=GREEN, 2=BLUE, 3=YELLOW, 4=BLACK
+classes:
+  - label: 0
+    color: 4
+    type: "round"
+    name: "black_buoy"
+  - label: 1
+    color: 2
+    type: "round"
+    name: "blue_buoy"
+  - label: 2
+    color: 4
+    type: "marker"
+    name: "course_marker"
+  - label: 3
+    color: 1
+    type: "round"
+    name: "green_buoy"
+  - label: 4
+    color: 0
+    type: "marker"
+    name: "port_marker"
+  - label: 5
+    color: 0
+    type: "round"
+    name: "red_buoy"
+  - label: 6
+    color: 1
+    type: "marker"
+    name: "starboard_marker"
+  - label: 7
+    color: 3
+    type: "round"
+    name: "yellow_marker"
+ 
