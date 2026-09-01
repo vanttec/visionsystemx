@@ -77,12 +77,19 @@ install(TARGETS
   DESTINATION lib/${PROJECT_NAME}
 )
 
-# install launch, data, and config folders
+# install launch and config folders
 install(DIRECTORY
   launch
-  data
   config
   DESTINATION share/${PROJECT_NAME}/
 )
+
+# install data folder only if it exists
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/data")
+  install(
+    DIRECTORY data
+    DESTINATION share/${PROJECT_NAME}/
+  )
+endif()
 
 ament_package()
