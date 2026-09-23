@@ -38,7 +38,7 @@ import numpy as np
 import yaml
 import rclpy
 from rclpy.node import Node
-from rclpy.qos import QoSPresetProfiles
+from rclpy.qos import QoSPresetProfiles, QoSProfile, QoSHistoryPolicy
 
 from sensor_msgs.msg import Image, PointCloud2, CameraInfo
 from cv_bridge import CvBridge
@@ -68,9 +68,9 @@ def map_shapes_label(label: int):
     return mapping.get(label, (-1, "ignore"))
 
 
-def load_fusion_config() -> dict:
+def load_fusion_config(name: str = "fusion.yaml") -> dict:
     path = os.path.join(
-        get_package_share_directory("visionsystemx"), "config", "fusion.yaml"
+        get_package_share_directory("visionsystemx"), "config", name
     )
     with open(path, "r") as f:
         return yaml.safe_load(f)
@@ -106,7 +106,8 @@ def pointcloud2_to_xyz(cloud_msg: PointCloud2) -> np.ndarray:
 class LidarBboxRangeNode(Node):
     def __init__(self):
         super().__init__("lidar_bbox_range_node")
-        cfg = load_fusion_config()
+        self.declare_parameter("config_file", "fusion.yaml")
+        cfg = load_fusion_config(str(self.get_parameter("config_file").value))
 
         lidar_cfg = cfg.get("lidar", {})
         cam_cfg = cfg.get("camera", {})
@@ -167,17 +168,21 @@ class LidarBboxRangeNode(Node):
 
         self.cloud_buf: deque = deque(maxlen=max(1, self.accum_scans))
         self.cloud_time = None
+        self._logged_first_cloud = False
         self.latest_image = None
         self.bridge = CvBridge()
 
         qos = QoSPresetProfiles.SYSTEM_DEFAULT.value
+        # NOTE: lidar/image use explicit KeepLast(10): SYSTEM_DEFAULT did not
+        # match the ros_gz_bridge publisher QoS in testing (cloud never cached).
+        sensor_qos = QoSProfile(depth=10, history=QoSHistoryPolicy.KEEP_LAST)
         self.create_subscription(PointCloud2, self.lidar_topic,
-                                 self._on_cloud, qos)
+                                 self._on_cloud, sensor_qos)
         self.create_subscription(CameraInfo, self.camera_info_topic,
-                                 self._on_camera_info, qos)
+                                 self._on_camera_info, sensor_qos)
         if self.enable_debug:
             self.create_subscription(Image, self.image_topic,
-                                     self._on_image, qos)
+                                     self._on_image, sensor_qos)
         self.create_subscription(ZbboxArray, self.yolo_sub_topic,
                                  lambda m: self._on_dets(m, "yolo"), qos)
         self.create_subscription(ZbboxArray, self.shapes_sub_topic,
@@ -197,9 +202,19 @@ class LidarBboxRangeNode(Node):
         xyz = pointcloud2_to_xyz(msg)
         if xyz.shape[0] == 0:
             return
-        t = msg.header.stamp
+        # NOTE: arrival time, not header.stamp. Gazebo bridges stamp with
+        # sim time while this node runs on wall clock; comparing header
+        # stamps would report ages of decades and discard every cloud.
+        # Arrival-based freshness is valid for Velodyne drivers too
+        # (driver stamps with system time at capture).
+        t = self.get_clock().now().to_msg()
         self.cloud_buf.append(xyz)
         self.cloud_time = t
+        if not self._logged_first_cloud:
+            self._logged_first_cloud = True
+            self.get_logger().info(
+                f"first lidar cloud cached: {xyz.shape[0]} pts "
+                f"(buffered scans: {len(self.cloud_buf)})")
 
     def _on_camera_info(self, msg: CameraInfo):
         if self.use_camera_info:
@@ -258,27 +273,41 @@ class LidarBboxRangeNode(Node):
             return None, int(zs.shape[0])
         return float(np.median(zs)), int(zs.shape[0])
 
+    def _ignores_for(self, msg: ZbboxArray) -> ObjectList:
+        """Per-box ignore entries preserving uuids (used when ranging
+        is impossible: no/stale cloud, projection failure)."""
+        dets = ObjectList()
+        for box in msg.boxes:
+            obj = Object()
+            obj.color = -1
+            obj.type = "ignore"
+            obj.uuid = box.uuid
+            obj.x, obj.y, obj.v_x, obj.v_y = 0.0, 0.0, 0.0, 0.0
+            dets.obj_list.append(obj)
+        return dets
+
     def _on_dets(self, msg: ZbboxArray, kind: str):
         mapper = map_yolo_label if kind == "yolo" else map_shapes_label
         pub = self.yolo_pub if kind == "yolo" else self.shapes_pub
-        dets = ObjectList()
 
         if self.cloud_time is None:
             self.get_logger().debug(f"[{kind}] no lidar cloud yet")
-            self._publish_padded(pub, dets)
+            self._publish_padded(pub, self._ignores_for(msg))
             return
         now = self.get_clock().now()
         age = (now - rclpy.time.Time.from_msg(self.cloud_time)).nanoseconds * 1e-9
         if age > self.cloud_timeout:
             self.get_logger().debug(f"[{kind}] stale cloud ({age:.2f}s)")
-            self._publish_padded(pub, dets)
+            self._publish_padded(pub, self._ignores_for(msg))
             return
 
         proj = self._project_cached()
         if proj[0] is None:
-            self._publish_padded(pub, dets)
+            self.get_logger().debug(f"[{kind}] projection empty (no front points)")
+            self._publish_padded(pub, self._ignores_for(msg))
             return
         uv, z_cam = proj
+        dets = ObjectList()
         fx, cx = float(self.K[0, 0]), float(self.K[0, 2])
         dbg_hits = []
 
@@ -292,6 +321,9 @@ class LidarBboxRangeNode(Node):
             z_med, nhits = self._range_for_bbox(
                 uv, z_cam, box.x0, box.y0, box.x1, box.y1)
             dbg_hits.append(nhits)
+            self.get_logger().debug(
+                f"[{kind}] box {box.x0},{box.y0},{box.x1},{box.y1} "
+                f"uuid={box.uuid} hits={nhits} nproj={len(z_cam)}")
             if z_med is None:
                 obj.x, obj.y = 0.0, 0.0
                 obj.type = "ignore"
