@@ -67,9 +67,47 @@ def generate_launch_description():
             # Standard parameters
             {'video_topic': '/bebblebrox/video'},
             {'yolo_sub_topic': '/yolo/detections'},
-            {'frame_interval': 100}, # run every 100 ms  
+            {'frame_interval': 100}, # run every 100 ms
         ],
         # arguments=['--ros-args', '--log-level', 'DEBUG']
+    )
+
+    # --- ZED replacement: USB webcam + LiDAR frustum ranging ---
+    # Publishes /bebblebrox/video + /bebblebrox/video/camera_info.
+    # Calibrate first (camera_calibration) and set camera_info_url.
+    usb_cam = Node(
+        package='usb_cam',
+        executable='usb_cam_node_exe',
+        name='usb_cam',
+        output='screen',
+        parameters=[
+            {'video_device': '/dev/video0'},
+            {'framerate': 30.0},
+            {'pixel_format': 'mjpeg2rgb'},
+            {'camera_info_url': 'file:///tmp/webcam_calibration.yaml'},
+            {'image_width': 1280},
+            {'image_height': 720},
+        ],
+        remappings=[
+            ('image_raw', '/bebblebrox/video'),
+            ('camera_info', '/bebblebrox/video/camera_info'),
+        ],
+    )
+
+    lidar_range = Node(
+        package='visionsystemx',
+        executable='lidar_bbox_range_node.py',
+        name='lidar_bbox_range',
+        output='screen',
+        parameters=[
+            {'lidar_topic': '/velodyne_points'},
+            {'camera_info_topic': '/bebblebrox/video/camera_info'},
+            {'image_topic': '/bebblebrox/video'},
+            {'yolo_sub_topic': '/yolo/detections'},
+            {'shapes_sub_topic': '/shapes/detections'},
+            {'objects_yolo_topic': '/bebblebrox/objects/yolo'},
+            {'objects_shapes_topic': '/bebblebrox/objects/shapes'},
+        ],
     )
 
     fusion = Node(
@@ -93,10 +131,12 @@ def generate_launch_description():
 
     return LaunchDescription([
         camera_model_arg,
-        video_feed,
+        # video_feed,  # legacy ZED path, keep off while on USB+LiDAR
+        usb_cam,
+        velodyne,
+        lidar_range,
         image_republish,
         # yolo_tensorrt,
-        # velodyne,
         # fusion,
         # rviz,
         # rqt,
