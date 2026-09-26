@@ -67,12 +67,19 @@ def map_yolo_label(label: int):
 
 
 def map_shapes_label(label: int):
+    # Empirically identified from rb26 bags (shape_samples/ crops):
+    #   0 = black buoy, 2 = red buoy, 3 = red marker (post, majority 5/8),
+    #   4 = green marker (post), 5 = yellow buoy, 17 = red triangle.
+    # The legacy beeblebrox table (blue circle/duck/...) contradicts these
+    # observations and is NOT used. Unobserved labels -> ignore (safe:
+    # ranging still works, only color/type is withheld).
     mapping = {
-        0: (2, "circle"), 1: (2, "plus"), 2: (2, "square"),
-        3: (2, "triangle"), 4: (3, "duck"), 5: (1, "circle"),
-        6: (1, "plus"), 7: (1, "square"), 8: (1, "triangle"),
-        9: (0, "circle"), 10: (0, "plus"), 11: (0, "square"),
-        12: (0, "triangle"),
+        0: (4, "round"),
+        2: (0, "round"),
+        3: (0, "marker"),
+        4: (1, "marker"),
+        5: (3, "round"),
+        17: (0, "triangle"),
     }
     return mapping.get(label, (-1, "ignore"))
 
