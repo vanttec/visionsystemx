@@ -48,11 +48,20 @@ from usv_interfaces.msg import ZbboxArray, ObjectList, Object
 from ament_index_python import get_package_share_directory
 
 
-# --- label maps (must match beeblebrox.cpp map_yolo_label/map_shapes_label) ---
+# --- label maps (must match beeblebrox.cpp map_yolo_label/map_shapes_label,
+# extended with SARASOTA shapes classes from NAMES in
+# src/detectors/yolo_tensorrt/yolo_tensorrt_node.cpp; "cross" -> "plus"
+# to match the shapes type vocabulary) ---
 def map_yolo_label(label: int):
     mapping = {
         0: (4, "round"), 1: (2, "round"), 2: (4, "marker"), 3: (1, "round"),
         4: (0, "marker"), 5: (0, "round"), 6: (1, "marker"), 7: (3, "round"),
+        8: (2, "square"), 9: (2, "triangle"),
+        10: (1, "circle"), 11: (1, "plus"),
+        12: (1, "square"), 13: (1, "triangle"),
+        14: (0, "circle"), 15: (0, "plus"),
+        16: (0, "square"), 17: (0, "triangle"),
+        18: (2, "circle"), 19: (2, "plus"),
     }
     return mapping.get(label, (-1, "ignore"))
 
