@@ -1,0 +1,64 @@
+# LiDAR-camera frustum association config.
+# Replaces ZED SDK ingestCustomBoxObjects + retrieveObjects with
+# VLP16 range + monocular bearing. See scripts/lidar_bbox_range_node.py.
+#
+# IMPORTANT: intrinsics (camera_matrix) and extrinsic_matrix below are
+# PLACEHOLDERS copied from the old ZED2i setup. They MUST be recalibrated
+# for the USB webcam before field use. At runtime the node prefers the
+# live CameraInfo topic (use_camera_info: true); YAML values are fallback.
+
+lidar:
+  lidar_topic: /velodyne_points
+  frame_id: velodyne
+  min_range: 0.5          # [m] below this the VLP16 is unreliable / occluded
+  max_range: 60.0         # [m] beyond this VLP16 returns are too sparse
+  min_hits: 3             # min projected points inside eroded bbox to accept range
+  accumulation_scans: 3   # ring buffer of recent scans concatenated (no ego-motion comp in MVP)
+  cloud_timeout: 1.0      # [s] bbox with older cloud -> publish "ignore"
+
+camera:
+  image_topic: /bebblebrox/video          # only used for debug overlay
+  camera_info_topic: /bebblebrox/video/camera_info
+  debug_topic: /bebblebrox/debug/frustum
+  use_camera_info: true   # prefer live CameraInfo K/D over YAML fallback
+  # Fallback intrinsics (PLACEHOLDER - recalibrate with camera_calibration):
+  camera_matrix: [700.0, 0.0, 640.0,
+                  0.0, 700.0, 360.0,
+                  0.0, 0.0, 1.0]
+  dist_coeffs: [0.0, 0.0, 0.0, 0.0, 0.0]
+  image_width: 1280
+  image_height: 720
+
+topics:
+  yolo_sub_topic: /yolo/detections
+  shapes_sub_topic: /shapes/detections
+  objects_yolo_topic: /bebblebrox/objects/yolo
+  objects_shapes_topic: /bebblebrox/objects/shapes
+
+bbox:
+  erosion_ratio: 0.10     # shrink each bbox side by 10% to reject background
+  pad_to: 10              # pad ObjectList to N entries like beeblebrox objs2markers
+  mad_scale: 2.0          # outlier rejection: |z - median| > mad_scale * MAD
+
+sync:
+  slop: 0.10              # [s] informational; node uses latest-cloud cache, not exact sync
+
+# PLACEHOLDER extrinsics from the ZED2i mount. Recalibrate with the procedure
+# in scripts/lidar_bbox_range_node.py header (solvePnP, <3px reprojection).
+extrinsic_matrix:
+- - 0.004925697387197947
+  - -0.9999744448207916
+  - -0.0051814293973278525
+  - 0.06684500162782157
+- - 0.01300526353504694
+  - 0.00524511394559779
+  - -0.9999016711157561
+  - -0.1345418740635012
+- - 0.99990329563695
+  - 0.004857827194069242
+  - 0.013030767027264023
+  - -0.12626667685463364
+- - 0.0
+  - 0.0
+  - 0.0
+  - 1.0
