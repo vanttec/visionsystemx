@@ -100,7 +100,7 @@ def generate_launch_description():
             {'video_device': '/dev/video0'},
             {'framerate': 30.0},
             {'pixel_format': 'mjpeg2rgb'},
-            {'camera_info_url': 'file:///tmp/webcam_calibration.yaml'},
+            {'camera_info_url': 'file:///home/vanttec/vanttec_usv/src/visionsystemx/config/webcam_calibration.yaml'},
             {'image_width': 1280},
             {'image_height': 720},
         ],
