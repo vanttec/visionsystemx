@@ -209,7 +209,7 @@ def main():
                 return
             self.pending = (msg, self.cloud, self.image)
 
-        def handle(self):
+        def process_pending(self):  # not "handle": rclpy Node uses that name
             click, cloud, image = self.pending
             self.pending = None
             names = [f.name for f in cloud.fields]
@@ -283,7 +283,7 @@ def main():
         while rclpy.ok():
             rclpy.spin_once(node, timeout_sec=0.05)
             if node.pending:
-                node.handle()
+                node.process_pending()
     except KeyboardInterrupt:
         pass
     node.destroy_node()
