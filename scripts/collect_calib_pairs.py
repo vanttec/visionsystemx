@@ -77,8 +77,14 @@ def chord(t, A, B, phi):
     return lo, hi
 
 
-def board_center(P, rings, board_w, board_h, mode):
-    """Board points (N,3) + ring ids -> (center xyz, info str)."""
+def board_center(P, rings, board_w, board_h, mode, click=None):
+    """Board points (N,3) + ring ids -> (center xyz, info str).
+
+    The holder's torso/legs often lie in the board plane right above or
+    below it, so only runs of consecutive rings that fit within the board
+    diagonal (and contain the click) are fitted; the run with the most rings
+    that matches the rectangle wins.
+    """
     if mode == "centroid" or rings is None:
         return P.mean(axis=0), f"centroid n={len(P)}"
     _, n = fit_plane(P, 0.05)
@@ -99,10 +105,11 @@ def board_center(P, rings, board_w, board_h, mode):
         tr.append(t[m].mean())
     if len(tr) < 2:
         raise ValueError(f"need >=2 rings on the board, got {len(tr)}")
-    lo_o, hi_o, tr = map(np.array, (lo_o, hi_o, tr))
+    order = np.argsort(tr)
+    lo_o, hi_o, tr = (np.array(v)[order] for v in (lo_o, hi_o, tr))
     A, B = board_w / 2, board_h / 2
 
-    def search(phis, scs, tcs):
+    def search(lo_o, hi_o, tr, phis, scs, tcs):
         ph, sc, tc = np.meshgrid(phis, scs, tcs, indexing="ij")
         lo, hi = chord(tr - tc[..., None], A, B, ph[..., None])
         lo, hi = lo + sc[..., None], hi + sc[..., None]
@@ -110,26 +117,51 @@ def board_center(P, rings, board_w, board_h, mode):
         i = np.unravel_index(cost.argmin(), cost.shape)
         return phis[i[0]], scs[i[1]], tcs[i[2]], cost[i]
 
-    # coarse then fine grid; skip near-axis-aligned holds (vertical center
-    # is unobservable there: every ring sees the same full width)
-    mid = (lo_o + hi_o) / 2
-    phis = np.deg2rad(np.r_[np.arange(10, 80.1, 2.5), np.arange(100, 170.1, 2.5)])
-    phi, sc, tc, _ = search(phis, np.arange(mid.min() - 0.4, mid.max() + 0.4, 0.02),
-                            np.arange(tr.min() - 0.5, tr.max() + 0.5, 0.02))
-    phi, sc, tc, cost = search(phi + np.deg2rad(np.arange(-2.5, 2.6, 0.25)),
-                               sc + np.arange(-0.03, 0.031, 0.002),
-                               tc + np.arange(-0.03, 0.031, 0.002))
-    rms = np.sqrt(cost / (2 * len(tr)))
+    def fit(lo_o, hi_o, tr):
+        # coarse then fine grid; skip near-axis-aligned holds (vertical center
+        # is unobservable there: every ring sees the same full width)
+        mid = (lo_o + hi_o) / 2
+        phis = np.deg2rad(np.r_[np.arange(10, 80.1, 2.5), np.arange(100, 170.1, 2.5)])
+        phi, sc, tc, _ = search(lo_o, hi_o, tr, phis,
+                                np.arange(mid.min() - 0.4, mid.max() + 0.4, 0.02),
+                                np.arange(tr.min() - 0.5, tr.max() + 0.5, 0.02))
+        phi, sc, tc, cost = search(lo_o, hi_o, tr,
+                                   phi + np.deg2rad(np.arange(-2.5, 2.6, 0.25)),
+                                   sc + np.arange(-0.03, 0.031, 0.002),
+                                   tc + np.arange(-0.03, 0.031, 0.002))
+        return phi, sc, tc, np.sqrt(cost / (2 * len(tr)))
+
+    t_click = None if click is None else (np.asarray(click) - c0) @ e_v
+    diag = np.hypot(board_w, board_h)
+    best = None
+    for i in range(len(tr)):
+        for j in range(i + 1, len(tr)):
+            if tr[j] - tr[i] > diag:
+                break
+            if t_click is not None and not tr[i] - 0.06 <= t_click <= tr[j] + 0.06:
+                continue
+            k = slice(i, j + 1)
+            phi, sc, tc, rms = fit(lo_o[k], hi_o[k], tr[k])
+            # most rings among good fits (rms < 2.5 cm), else lowest rms
+            key = (rms < 0.025, j - i + 1 if rms < 0.025 else -rms)
+            if best is None or key > best[0]:
+                best = (key, phi, sc, tc, rms, j - i + 1)
+    if best is None:
+        raise ValueError("no ring run around the click fits the board")
+    _, phi, sc, tc, rms, used = best
     center = c0 + sc * e_h + tc * e_v
-    return center, (f"edges rings={len(tr)} rot={np.rad2deg(phi) % 180:.0f}deg "
+    return center, (f"edges rings={used}/{len(tr)} rot={np.rad2deg(phi) % 180:.0f}deg "
                     f"rms={rms * 100:.1f}cm")
 
 
 def selftest():
-    """Synthetic VLP16 hits on a rotated 0.70x0.61 board + a person behind."""
+    """Synthetic VLP16 hits on a rotated 0.70x0.61 board + a person behind,
+    and (torso=True) a torso in the board plane right above it."""
     w, h = 0.70, 0.61
-    for true, rot in (([5.0, 0.3, 0.17], 45), ([9.0, -1.2, -0.4], 38),
-                      ([4.0, 1.0, 0.55], 130), ([7.0, 0.0, 0.0], 55)):
+    top = np.hypot(w, h) / 2
+    for true, rot, torso in (([5.0, 0.3, 0.17], 45, False), ([9.0, -1.2, -0.4], 38, False),
+                             ([4.0, 1.0, 0.55], 130, False), ([7.0, 0.0, 0.0], 55, False),
+                             ([3.0, 0.15, -0.45], 45, True), ([5.0, -0.7, -0.4], 50, True)):
         true = np.array(true)
         c, s_ = np.cos(np.deg2rad(rot)), np.sin(np.deg2rad(rot))
         rng = np.random.default_rng(1)
@@ -140,17 +172,20 @@ def selftest():
                               np.cos(el) * np.sin(az), np.sin(el)])
                 p = d * true[0] / d[0]
                 u, v = p[1] - true[1], p[2] - true[2]
-                if abs(u * c + v * s_) <= w / 2 and abs(-u * s_ + v * c) <= h / 2:
+                on_board = abs(u * c + v * s_) <= w / 2 and abs(-u * s_ + v * c) <= h / 2
+                on_torso = torso and abs(u) <= 0.2 and top - 0.1 < v < top + 0.6
+                if on_board or on_torso:
                     pts.append(p + rng.normal(0, 0.005, 3))
                     rings.append(ring)
         P = np.array(pts)
         P[:, 0] += rng.normal(0, 0.01, len(P))
         person = true + rng.normal([0.4, 0, -0.3], 0.1, (40, 3))
         P, rings = np.vstack([P, person]), np.array(rings + [99] * 40)
-        inl, _ = fit_plane(P, 0.05, through=P[0])  # click lands on a board point
-        c, info = board_center(P[inl], rings[inl], w, h, "edges")
+        inl, _ = fit_plane(P, 0.05, through=true)  # click on the board
+        c, info = board_center(P[inl], rings[inl], w, h, "edges", click=true)
         err = np.abs(c - true)
-        print(f"true={true} rot={rot} est={c.round(3)} err_cm={(err * 100).round(1)} {info}")
+        print(f"true={true} rot={rot} torso={torso} est={c.round(3)} "
+              f"err_cm={(err * 100).round(1)} {info}")
         assert err[1] < 0.015 and err[2] < 0.015, "center error > 1.5 cm"
     print("selftest ok")
 
@@ -232,7 +267,7 @@ def main():
             B = P[near][inl]
             R = rings[near][inl] if rings is not None else None
             try:
-                c, info = board_center(B, R, self.board_w, self.board_h, self.mode)
+                c, info = board_center(B, R, self.board_w, self.board_h, self.mode, click=q)
             except ValueError as e:
                 self.get_logger().warn(f"{e}; move the board closer or use board_mode:=centroid")
                 return
