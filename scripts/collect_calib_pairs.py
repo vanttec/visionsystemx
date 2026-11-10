@@ -19,6 +19,8 @@ Usage (Jetson; the apt OpenCV is needed because the CUDA build has no GUI):
     PYTHONPATH=/usr/lib/python3/dist-packages:$PYTHONPATH \
       ros2 run visionsystemx collect_calib_pairs.py --ros-args \
       -p board_w:=0.70 -p board_h:=0.61 -p out_dir:=$HOME/calib_pairs
+  image_topic is a CompressedImage topic (default /bebblebrox/video/compressed;
+  usb_cam run by hand publishes /image_raw/compressed). No republish needed.
 
   rviz: Fixed Frame = velodyne, PointCloud2 /velodyne_points, optionally
   PointCloud2 /calib/board_points and PointStamped /calib/board_center to
@@ -154,31 +156,25 @@ def selftest():
 
 
 def main():
+    from collections import deque
+
     import cv2
     import rclpy
     from rclpy.node import Node
-    from rclpy.qos import qos_profile_sensor_data
     from geometry_msgs.msg import PointStamped
-    from sensor_msgs.msg import Image, PointCloud2
+    from sensor_msgs.msg import CompressedImage, PointCloud2
     from sensor_msgs_py import point_cloud2 as pc2
 
-    # not imported from extract_shape_samples: that pulls usv_interfaces,
-    # which a plain ROS container (laptop + bag) does not have
-    def to_bgr(msg):
-        arr = np.frombuffer(msg.data, dtype=np.uint8)
-        if msg.encoding == "bgr8":
-            return arr.reshape(msg.height, msg.width, 3).copy()
-        if msg.encoding == "rgb8":
-            return cv2.cvtColor(arr.reshape(msg.height, msg.width, 3), cv2.COLOR_RGB2BGR)
-        if msg.encoding in ("mono8", "8UC1"):
-            return cv2.cvtColor(arr.reshape(msg.height, msg.width), cv2.COLOR_GRAY2BGR)
-        raise ValueError(f"unsupported encoding {msg.encoding}")
+    import time
 
     class Collector(Node):
         def __init__(self):
             super().__init__("collect_calib_pairs")
             self.cloud_topic = self.declare_parameter("cloud_topic", "/velodyne_points").value
-            self.image_topic = self.declare_parameter("image_topic", "/bebblebrox/video").value
+            # compressed + reliable: raw 1280x720 frames over best-effort DDS
+            # get dropped, leaving a stale frame that no longer matches the cloud
+            self.image_topic = self.declare_parameter(
+                "image_topic", "/bebblebrox/video/compressed").value
             self.out_dir = os.path.expanduser(
                 self.declare_parameter("out_dir", "~/calib_pairs").value)
             self.board_w = float(self.declare_parameter("board_w", 0.70).value)
@@ -186,11 +182,16 @@ def main():
             self.mode = self.declare_parameter("board_mode", "edges").value
             self.radius = float(self.declare_parameter("radius", 0.8).value)
             os.makedirs(self.out_dir, exist_ok=True)
-            self.cloud = self.image = self.pending = None
-            self.create_subscription(PointCloud2, self.cloud_topic,
-                                     lambda m: setattr(self, "cloud", m), qos_profile_sensor_data)
-            self.create_subscription(Image, self.image_topic,
-                                     lambda m: setattr(self, "image", m), qos_profile_sensor_data)
+            # matched by arrival time, not header stamp: usb_cam stamps lag
+            # ~1 s behind the cloud's; bag play reproduces arrival timing
+            self.cloud = self.pending = None
+            self.images = deque(maxlen=90)  # (arrival, msg), ~3 s of frames
+            self.create_subscription(
+                PointCloud2, self.cloud_topic,
+                lambda m: setattr(self, "cloud", (time.monotonic(), m)), 10)
+            self.create_subscription(
+                CompressedImage, self.image_topic,
+                lambda m: self.images.append((time.monotonic(), m)), 10)
             self.create_subscription(PointStamped, "/clicked_point", self._on_click, 10)
             self.pub_pts = self.create_publisher(PointCloud2, "/calib/board_points", 1)
             self.pub_ctr = self.create_publisher(PointStamped, "/calib/board_center", 1)
@@ -199,15 +200,20 @@ def main():
                 f"{self.out_dir}/corr.tsv")
 
         def _on_click(self, msg):
-            if self.cloud is None or self.image is None:
-                self.get_logger().warn("no cloud/image received yet")
+            if self.cloud is None or not self.images:
+                self.get_logger().warn(
+                    f"no cloud/image received yet (image_topic={self.image_topic})")
                 return
-            if msg.header.frame_id != self.cloud.header.frame_id:
+            t_cloud, cloud = self.cloud
+            if msg.header.frame_id != cloud.header.frame_id:
                 self.get_logger().warn(
                     f"click in '{msg.header.frame_id}', cloud in "
-                    f"'{self.cloud.header.frame_id}': set rviz Fixed Frame to the cloud frame")
+                    f"'{cloud.header.frame_id}': set rviz Fixed Frame to the cloud frame")
                 return
-            self.pending = (msg, self.cloud, self.image)
+            t_img, image = min(self.images, key=lambda e: abs(e[0] - t_cloud))
+            if abs(t_img - t_cloud) > 0.1:
+                self.get_logger().warn(f"closest image is {t_img - t_cloud:+.2f}s from the cloud")
+            self.pending = (msg, cloud, image)
 
         def process_pending(self):  # not "handle": rclpy Node uses that name
             click, cloud, image = self.pending
@@ -236,7 +242,7 @@ def main():
             self.pub_ctr.publish(ctr)
             self.get_logger().info(f"board center {c.round(3)} ({info})")
 
-            img = to_bgr(image)
+            img = cv2.imdecode(np.frombuffer(image.data, np.uint8), cv2.IMREAD_COLOR)
             uv = self._pick_pixel(img)
             if uv is None:
                 self.get_logger().info("discarded")
