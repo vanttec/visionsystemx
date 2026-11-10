@@ -8,16 +8,17 @@ frame of that same moment, you click the board center mark, and the line
 saved as <out_dir>/posNN.png.
 
 Board center (``board_mode``):
-  diamond  (default) square board held ROTATED 45 deg (a rhombus). Each VLP16
-           ring cuts it with chord width w = 2*(a - |h|), a = side/sqrt(2),
-           h = ring height above the center, so the center height is solved
-           from the widths even when no ring passes through it.
+  edges    (default) rectangular board (board_w x board_h) held ROTATED,
+           roughly 45 deg. Each VLP16 ring cuts it in a chord whose two ends
+           depend on the ring height, so center and in-plane rotation are
+           fitted to the chord ends of all rings, even when no ring passes
+           through the center. Needs >= 2 rings on the board.
   centroid mean of the board points; vertical error up to half a ring gap.
 
 Usage (Jetson; the apt OpenCV is needed because the CUDA build has no GUI):
     PYTHONPATH=/usr/lib/python3/dist-packages:$PYTHONPATH \
       ros2 run visionsystemx collect_calib_pairs.py --ros-args \
-      -p board_side:=0.60 -p out_dir:=$HOME/calib_pairs
+      -p board_w:=0.70 -p board_h:=0.61 -p out_dir:=$HOME/calib_pairs
 
   rviz: Fixed Frame = velodyne, PointCloud2 /velodyne_points, optionally
   PointCloud2 /calib/board_points and PointStamped /calib/board_center to
@@ -63,7 +64,18 @@ def fit_plane(P, thresh, iters=200, seed=0, through=None):
     return np.abs((P - c0) @ n) < thresh, n
 
 
-def board_center(P, rings, side, mode):
+def chord(t, A, B, phi):
+    """Ends [lo, hi] of the horizontal line at height t (from the center)
+    inside a rectangle of half sizes A, B rotated by phi in its plane."""
+    c, s = np.cos(phi), np.sin(phi)
+    a1, a2 = (-A - t * s) / c, (A - t * s) / c
+    b1, b2 = (t * c - B) / s, (t * c + B) / s
+    lo = np.maximum(np.minimum(a1, a2), np.minimum(b1, b2))
+    hi = np.minimum(np.maximum(a1, a2), np.maximum(b1, b2))
+    return lo, hi
+
+
+def board_center(P, rings, board_w, board_h, mode):
     """Board points (N,3) + ring ids -> (center xyz, info str)."""
     if mode == "centroid" or rings is None:
         return P.mean(axis=0), f"centroid n={len(P)}"
@@ -73,34 +85,51 @@ def board_center(P, rings, side, mode):
     e_v /= np.linalg.norm(e_v)
     e_h = np.cross(e_v, n)
     s, t = (P - c0) @ e_h, (P - c0) @ e_v
-    a = side / np.sqrt(2.0)
-    mids, tr, hr = [], [], []
+    lo_o, hi_o, tr = [], [], []
     for r in np.unique(rings):
         m = rings == r
         if m.sum() < 3:
             continue
         ss = np.sort(s[m])
-        # samples miss each edge by ~half a step on average
-        w = ss[-1] - ss[0] + np.median(np.diff(ss))
-        mids.append((ss[0] + ss[-1]) / 2)
+        half = np.median(np.diff(ss)) / 2  # samples miss each edge by ~half a step
+        lo_o.append(ss[0] - half)
+        hi_o.append(ss[-1] + half)
         tr.append(t[m].mean())
-        hr.append(np.clip(a - w / 2, 0.0, a))
     if len(tr) < 2:
         raise ValueError(f"need >=2 rings on the board, got {len(tr)}")
-    tr, hr = np.array(tr), np.array(hr)
-    grid = np.arange(tr.min() - a, tr.max() + a, 0.001)
-    cost = ((np.abs(tr[None] - grid[:, None]) - hr[None]) ** 2).sum(axis=1)
-    tc = grid[cost.argmin()]
-    rms = np.sqrt(cost.min() / len(tr))
-    center = c0 + np.median(mids) * e_h + tc * e_v
-    return center, f"diamond rings={len(tr)} rms={rms * 100:.1f}cm"
+    lo_o, hi_o, tr = map(np.array, (lo_o, hi_o, tr))
+    A, B = board_w / 2, board_h / 2
+
+    def search(phis, scs, tcs):
+        ph, sc, tc = np.meshgrid(phis, scs, tcs, indexing="ij")
+        lo, hi = chord(tr - tc[..., None], A, B, ph[..., None])
+        lo, hi = lo + sc[..., None], hi + sc[..., None]
+        cost = np.where(hi > lo, (lo - lo_o) ** 2 + (hi - hi_o) ** 2, 1.0).sum(-1)
+        i = np.unravel_index(cost.argmin(), cost.shape)
+        return phis[i[0]], scs[i[1]], tcs[i[2]], cost[i]
+
+    # coarse then fine grid; skip near-axis-aligned holds (vertical center
+    # is unobservable there: every ring sees the same full width)
+    mid = (lo_o + hi_o) / 2
+    phis = np.deg2rad(np.r_[np.arange(10, 80.1, 2.5), np.arange(100, 170.1, 2.5)])
+    phi, sc, tc, _ = search(phis, np.arange(mid.min() - 0.4, mid.max() + 0.4, 0.02),
+                            np.arange(tr.min() - 0.5, tr.max() + 0.5, 0.02))
+    phi, sc, tc, cost = search(phi + np.deg2rad(np.arange(-2.5, 2.6, 0.25)),
+                               sc + np.arange(-0.03, 0.031, 0.002),
+                               tc + np.arange(-0.03, 0.031, 0.002))
+    rms = np.sqrt(cost / (2 * len(tr)))
+    center = c0 + sc * e_h + tc * e_v
+    return center, (f"edges rings={len(tr)} rot={np.rad2deg(phi) % 180:.0f}deg "
+                    f"rms={rms * 100:.1f}cm")
 
 
 def selftest():
-    """Synthetic VLP16 hits on a 0.6 m rhombus + a person behind it."""
-    side, a = 0.6, 0.6 / np.sqrt(2.0)
-    for true in ([5.0, 0.3, 0.17], [9.0, -1.2, -0.4], [4.0, 1.0, 0.55]):
+    """Synthetic VLP16 hits on a rotated 0.70x0.61 board + a person behind."""
+    w, h = 0.70, 0.61
+    for true, rot in (([5.0, 0.3, 0.17], 45), ([9.0, -1.2, -0.4], 38),
+                      ([4.0, 1.0, 0.55], 130), ([7.0, 0.0, 0.0], 55)):
         true = np.array(true)
+        c, s_ = np.cos(np.deg2rad(rot)), np.sin(np.deg2rad(rot))
         rng = np.random.default_rng(1)
         pts, rings = [], []
         for ring, el in enumerate(np.deg2rad(np.arange(-15, 16, 2))):
@@ -108,7 +137,8 @@ def selftest():
                 d = np.array([np.cos(el) * np.cos(az),
                               np.cos(el) * np.sin(az), np.sin(el)])
                 p = d * true[0] / d[0]
-                if abs(p[1] - true[1]) + abs(p[2] - true[2]) <= a:
+                u, v = p[1] - true[1], p[2] - true[2]
+                if abs(u * c + v * s_) <= w / 2 and abs(-u * s_ + v * c) <= h / 2:
                     pts.append(p + rng.normal(0, 0.005, 3))
                     rings.append(ring)
         P = np.array(pts)
@@ -116,9 +146,9 @@ def selftest():
         person = true + rng.normal([0.4, 0, -0.3], 0.1, (40, 3))
         P, rings = np.vstack([P, person]), np.array(rings + [99] * 40)
         inl, _ = fit_plane(P, 0.05, through=P[0])  # click lands on a board point
-        c, info = board_center(P[inl], rings[inl], side, "diamond")
+        c, info = board_center(P[inl], rings[inl], w, h, "edges")
         err = np.abs(c - true)
-        print(f"true={true} est={c.round(3)} err_cm={(err * 100).round(1)} {info}")
+        print(f"true={true} rot={rot} est={c.round(3)} err_cm={(err * 100).round(1)} {info}")
         assert err[1] < 0.015 and err[2] < 0.015, "center error > 1.5 cm"
     print("selftest ok")
 
@@ -151,8 +181,9 @@ def main():
             self.image_topic = self.declare_parameter("image_topic", "/bebblebrox/video").value
             self.out_dir = os.path.expanduser(
                 self.declare_parameter("out_dir", "~/calib_pairs").value)
-            self.side = float(self.declare_parameter("board_side", 0.60).value)
-            self.mode = self.declare_parameter("board_mode", "diamond").value
+            self.board_w = float(self.declare_parameter("board_w", 0.70).value)
+            self.board_h = float(self.declare_parameter("board_h", 0.61).value)
+            self.mode = self.declare_parameter("board_mode", "edges").value
             self.radius = float(self.declare_parameter("radius", 0.8).value)
             os.makedirs(self.out_dir, exist_ok=True)
             self.cloud = self.image = self.pending = None
@@ -164,7 +195,8 @@ def main():
             self.pub_pts = self.create_publisher(PointCloud2, "/calib/board_points", 1)
             self.pub_ctr = self.create_publisher(PointStamped, "/calib/board_center", 1)
             self.get_logger().info(
-                f"ready: board {self.mode} side={self.side}m -> {self.out_dir}/corr.tsv")
+                f"ready: board {self.mode} {self.board_w}x{self.board_h}m -> "
+                f"{self.out_dir}/corr.tsv")
 
         def _on_click(self, msg):
             if self.cloud is None or self.image is None:
@@ -194,7 +226,7 @@ def main():
             B = P[near][inl]
             R = rings[near][inl] if rings is not None else None
             try:
-                c, info = board_center(B, R, self.side, self.mode)
+                c, info = board_center(B, R, self.board_w, self.board_h, self.mode)
             except ValueError as e:
                 self.get_logger().warn(f"{e}; move the board closer or use board_mode:=centroid")
                 return
