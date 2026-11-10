@@ -1,5 +1,5 @@
 from launch import LaunchDescription
-from launch.actions import IncludeLaunchDescription, DeclareLaunchArgument
+from launch.actions import IncludeLaunchDescription, DeclareLaunchArgument, ExecuteProcess, TimerAction
 from launch.conditions import IfCondition, UnlessCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import PathJoinSubstitution, LaunchConfiguration
@@ -90,6 +90,7 @@ def generate_launch_description():
     # --- ZED replacement: USB webcam + LiDAR frustum ranging ---
     # Publishes /bebblebrox/video + /bebblebrox/video/camera_info.
     # Calibrate first (camera_calibration) and set camera_info_url.
+    video_device = '/dev/video0'
     usb_cam = Node(
         package='usb_cam',
         executable='usb_cam_node_exe',
@@ -97,7 +98,7 @@ def generate_launch_description():
         output='screen',
         condition=UnlessCondition(use_zed),
         parameters=[
-            {'video_device': '/dev/video0'},
+            {'video_device': video_device},
             {'framerate': 30.0},
             {'pixel_format': 'mjpeg2rgb'},
             {'camera_info_url': 'file:///home/vanttec/vanttec_usv/src/visionsystemx/config/webcam_calibration.yaml'},
@@ -108,6 +109,21 @@ def generate_launch_description():
             ('image_raw', '/bebblebrox/video'),
             ('camera_info', '/bebblebrox/video/camera_info'),
         ],
+    )
+
+    # The C920 powers up in autofocus, which shifts fx/fy away from the
+    # calibration. usb_cam tries the old 'focus_auto' control, gone on current
+    # kernels, so lock focus at infinity here once usb_cam has opened the
+    # device. Two calls: focus_absolute is rejected while autofocus is on.
+    lock_focus = TimerAction(
+        period=3.0,
+        condition=UnlessCondition(use_zed),
+        actions=[ExecuteProcess(
+            cmd=['bash', '-c',
+                 f'v4l2-ctl -d {video_device} -c focus_automatic_continuous=0 && '
+                 f'v4l2-ctl -d {video_device} -c focus_absolute=0'],
+            output='screen',
+        )],
     )
 
     lidar_range = Node(
@@ -152,6 +168,7 @@ def generate_launch_description():
         use_zed_arg,
         video_feed,
         usb_cam,
+        lock_focus,
         velodyne,
         lidar_range,
         yolo_tensorrt,
