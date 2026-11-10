@@ -20,14 +20,10 @@ Output contract (matches ``objs2markers``): ``ObjectList`` padded to
 ``uuid`` from the input bbox is preserved for ByteTrack continuity.
 ``v_x/v_y`` are 0.0 in the MVP (velocity comes from tracking downstream).
 
-Extrinsic recalibration (mandatory for a new webcam; YAML values are
-placeholders from the ZED2i mount):
-  1. Calibrate intrinsics: ``ros2 run camera_calibration cameracalibrator``,
-     publish them on the CameraInfo topic (preferred, ``use_camera_info``).
-  2. Boat static, 10-15 correspondences: LiDAR cluster centroids of
-     poles/buoys at 5/10/15 m <-> clicked image pixels.
-  3. ``cv2.solvePnP`` -> ``T_lidar_to_cam``, check reprojection < 3 px.
-  4. Store in ``config/fusion.yaml``.
+Calibration (intrinsics + ``extrinsic_matrix`` in ``config/fusion.yaml``):
+redo it whenever the camera or the LiDAR moves on the mount. Procedure and
+troubleshooting:
+https://vanttec-documentation.readthedocs.io/en/latest/usv/usv_software/usv_software_perception/usv_software_perception_lidar_camera_calibration.html
 """
 
 import os

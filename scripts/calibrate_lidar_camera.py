@@ -1,23 +1,12 @@
 #!/usr/bin/env python3
 """Estimate T_lidar_to_cam from 3D-2D correspondences (field calibration).
 
-Field procedure (dock/presa, no special hardware besides a tape measure):
-  1. Intrinsics: point the webcam at a printed checkerboard and run
-       ros2 run camera_calibration cameracalibrator --size 9x7 --square 0.03 \
-         --image:=/bebblebrox/video --camera:=/bebblebrox/video
-     then SAVE (writes e.g. /tmp/calibrationdata.tar.gz; extract the
-     ost.yaml inside) and pass it as --intrinsics.
-  2. Boat static. An assistant holds a pole with reflective tape at N>=8
-     spots around the boat (5-20 m, spread left/center/right, near/far).
-  3. For each spot: tape-measure the pole base position relative to the
-     BOAT origin (x fwd, y left/right, z up), add the pole height used as
-     the clicked point (tip or tape band), then measure the LIDAR mount
-     offset once (lidar xyz in boat frame) and convert:
-         P_lidar = P_boat - lidar_offset
-  4. Save one image per spot (or one bag) and click the pole tip/band pixel.
-  5. Write correspondences TSV:  u_px  v_px  X_lidar  Y_lidar  Z_lidar
-  6. Run this script with --intrinsics + --corr. With --fusion-out it
-     patches config/fusion.yaml (K, D, size, extrinsic_matrix) in place.
+Full procedure (intrinsics, bag, pairs, troubleshooting):
+https://vanttec-documentation.readthedocs.io/en/latest/usv/usv_software/usv_software_perception/usv_software_perception_lidar_camera_calibration.html
+Pairs come from collect_calib_pairs.py as a TSV:  u_px v_px X_lidar Y_lidar Z_lidar
+With --fusion-out it patches config/fusion.yaml (K, D, size, extrinsic_matrix)
+in place, but yaml.safe_dump drops the file's comments; prefer copying the
+printed matrix by hand.
 
 Usage:
     python3 calibrate_lidar_camera.py --intrinsics ost.yaml \
