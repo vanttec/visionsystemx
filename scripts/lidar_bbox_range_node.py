@@ -329,6 +329,7 @@ class LidarBboxRangeNode(Node):
             obj.color = int(color)
             obj.type = otype
             obj.uuid = box.uuid
+            obj.confidence = float(box.prob)
             obj.v_x, obj.v_y = 0.0, 0.0
             z_med, nhits = self._range_for_bbox(
                 uv, z_cam, box.x0, box.y0, box.x1, box.y1)
