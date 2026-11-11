@@ -139,7 +139,12 @@ def generate_launch_description():
             {'shapes_sub_topic': '/shapes/detections'},
             {'objects_yolo_topic': '/bebblebrox/objects/yolo'},
             {'objects_shapes_topic': '/bebblebrox/objects/shapes'},
+            # Debug overlay converts every frame with cv_bridge, which segfaults
+            # when NumPy 2 is installed (Humble cv_bridge is built for NumPy 1).
+            {'enable_debug': False},
         ],
+        # Same latency on one thread; NumPy otherwise spreads over every core.
+        additional_env={'OMP_NUM_THREADS': '1', 'OPENBLAS_NUM_THREADS': '1'},
     )
 
     fusion = Node(
