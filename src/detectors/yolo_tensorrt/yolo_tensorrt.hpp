@@ -1,10 +1,12 @@
-#ifndef JETSON_DETECT_YOLOV8_HPP
-#define JETSON_DETECT_YOLOV8_HPP
+#ifndef JETSON_DETECT_YOLO26_HPP
+#define JETSON_DETECT_YOLO26_HPP
 #include "NvInferRuntime.h"
 #include "NvInferRuntimeCommon.h"
 #include "NvInferPlugin.h"
 #include "common.hpp"
 #include "fstream"
+#include <cstdint>
+#include <cstring>
 #include <memory>
 #include <unordered_map>
 
@@ -14,10 +16,10 @@
 
 using namespace det;
 
-class YOLOv8 {
+class YOLO26 {
 public:
-    explicit YOLOv8(const std::string& engine_file_path, double threshold, rclcpp::Logger logger_param);
-    ~YOLOv8();
+    explicit YOLO26(const std::string& engine_file_path, double threshold, rclcpp::Logger logger_param);
+    ~YOLO26();
 
     rclcpp::Logger logger;
 
@@ -68,9 +70,11 @@ private:
     std::string boxesName;
     std::string scoresName;
     std::string classesName;
+    std::string detectionsName;
+    bool unifiedDetectionOutput = false;
 };
 
-YOLOv8::YOLOv8(const std::string& engine_file_path, double threshold_param, rclcpp::Logger logger_param) 
+YOLO26::YOLO26(const std::string& engine_file_path, double threshold_param, rclcpp::Logger logger_param)
     : logger(logger_param), threshold(threshold_param)
 {
     // Load engine file
@@ -93,6 +97,21 @@ YOLOv8::YOLOv8(const std::string& engine_file_path, double threshold_param, rclc
     file.read(trtModelStream.data(), size);
     file.close();
 
+    // Ultralytics prefixes exported engines with a 4-byte JSON length and the
+    // JSON metadata. Engines produced directly by TensorRT have no prefix.
+    size_t engineOffset = 0;
+    if (trtModelStream.size() > sizeof(uint32_t) + 1) {
+        uint32_t metadataLength = 0;
+        std::memcpy(&metadataLength, trtModelStream.data(), sizeof(metadataLength));
+        const size_t candidateOffset = sizeof(metadataLength) + metadataLength;
+        if (metadataLength > 0 && candidateOffset < trtModelStream.size() &&
+            trtModelStream[sizeof(metadataLength)] == '{' &&
+            trtModelStream[candidateOffset - 1] == '}') {
+            engineOffset = candidateOffset;
+            RCLCPP_INFO(this->logger, "Skipping %zu-byte Ultralytics engine header", engineOffset);
+        }
+    }
+
     // Initialize TensorRT
     initLibNvInferPlugins(&this->gLogger, "");
     
@@ -104,7 +123,9 @@ YOLOv8::YOLOv8(const std::string& engine_file_path, double threshold_param, rclc
     }
 
     // Deserialize engine
-    this->engine = this->runtime->deserializeCudaEngine(trtModelStream.data(), size);
+    this->engine = this->runtime->deserializeCudaEngine(
+        trtModelStream.data() + engineOffset,
+        trtModelStream.size() - engineOffset);
     if (!this->engine) {
         RCLCPP_ERROR(this->logger, "Failed to deserialize CUDA engine");
         if (this->runtime) {
@@ -200,6 +221,13 @@ YOLOv8::YOLOv8(const std::string& engine_file_path, double threshold_param, rclc
         // Calculate total size
         size_t totalSize = 1;
         for (int d = 0; d < tensorInfo.dims.nbDims; d++) {
+            if (tensorInfo.dims.d[d] <= 0) {
+                RCLCPP_ERROR(
+                    this->logger,
+                    "Tensor '%s' has a dynamic or invalid dimension; export with dynamic=False",
+                    tensorName);
+                throw std::runtime_error("Dynamic TensorRT tensors are not supported");
+            }
             totalSize *= tensorInfo.dims.d[d];
         }
         tensorInfo.size = totalSize * tensorInfo.elementSize;
@@ -208,8 +236,22 @@ YOLOv8::YOLOv8(const std::string& engine_file_path, double threshold_param, rclc
         tensors[tensorName] = tensorInfo;
     }
     
-    // Verify we identified all needed output tensors
-    if (numDetectionsName.empty() || boxesName.empty() || scoresName.empty() || classesName.empty()) {
+    // YOLO26 exported with embedded NMS or its NMS-free head has one
+    // [batch, max_det, 6] output.
+    // Keep accepting the old four-output EfficientNMS engines during migration.
+    if (outputNames.size() == 1) {
+        detectionsName = outputNames.front();
+        const auto& output = tensors[detectionsName];
+        if (output.dims.nbDims != 3 || output.dims.d[2] != 6 ||
+            output.dataType != nvinfer1::DataType::kFLOAT) {
+            RCLCPP_ERROR(
+                this->logger,
+                "YOLO26 output must be FP32 [batch, max_det, 6], got tensor '%s'",
+                detectionsName.c_str());
+            throw std::runtime_error("Unsupported YOLO26 output tensor");
+        }
+        unifiedDetectionOutput = true;
+    } else if (numDetectionsName.empty() || boxesName.empty() || scoresName.empty() || classesName.empty()) {
         RCLCPP_WARN(this->logger, "Could not identify all output tensors by name pattern. Using order-based assignment.");
         if (outputNames.size() >= 4) {
             numDetectionsName = outputNames[0];
@@ -221,14 +263,27 @@ YOLOv8::YOLOv8(const std::string& engine_file_path, double threshold_param, rclc
             throw std::runtime_error("Model has insufficient output tensors");
         }
     }
-    
+
+    if (inputBlobName.empty()) {
+        throw std::runtime_error("TensorRT engine has no input tensor");
+    }
+    const auto& input = tensors.at(inputBlobName);
+    if (input.dims.nbDims != 4 || input.dataType != nvinfer1::DataType::kFLOAT) {
+        RCLCPP_ERROR(this->logger, "Model input must be a static FP32 NCHW tensor");
+        throw std::runtime_error("Unsupported model input tensor");
+    }
+
     RCLCPP_INFO(this->logger, "TensorRT engine loaded successfully");
     RCLCPP_INFO(this->logger, "  Input: %s", inputBlobName.c_str());
-    RCLCPP_INFO(this->logger, "  Outputs: num_dets=%s, boxes=%s, scores=%s, classes=%s", 
-               numDetectionsName.c_str(), boxesName.c_str(), scoresName.c_str(), classesName.c_str());
+    if (unifiedDetectionOutput) {
+        RCLCPP_INFO(this->logger, "  YOLO26 unified detection output: %s", detectionsName.c_str());
+    } else {
+        RCLCPP_INFO(this->logger, "  Legacy outputs: num_dets=%s, boxes=%s, scores=%s, classes=%s",
+                   numDetectionsName.c_str(), boxesName.c_str(), scoresName.c_str(), classesName.c_str());
+    }
 }
 
-YOLOv8::~YOLOv8()
+YOLO26::~YOLO26()
 {
     // Free CUDA resources
     if (this->stream) {
@@ -266,7 +321,7 @@ YOLOv8::~YOLOv8()
     }
 }
 
-void YOLOv8::make_pipe(bool warmup)
+void YOLO26::make_pipe(bool warmup)
 {
     // Allocate device and host memory for each tensor
     for (auto& pair : tensors) {
@@ -332,7 +387,7 @@ void YOLOv8::make_pipe(bool warmup)
     }
 }
 
-void YOLOv8::letterbox(const cv::Mat& image, cv::Mat& out, const cv::Size& size)
+void YOLO26::letterbox(const cv::Mat& image, cv::Mat& out, const cv::Size& size)
 {
     const float inp_h  = size.height;
     const float inp_w  = size.width;
@@ -371,7 +426,7 @@ void YOLOv8::letterbox(const cv::Mat& image, cv::Mat& out, const cv::Size& size)
     this->pparam.width  = width;
 }
 
-void YOLOv8::copy_from_Mat(const cv::Mat& image)
+void YOLO26::copy_from_Mat(const cv::Mat& image)
 {
     auto& inputTensor = tensors[inputBlobName];
     cv::Mat nchw;
@@ -408,7 +463,7 @@ void YOLOv8::copy_from_Mat(const cv::Mat& image)
     }
 }
 
-void YOLOv8::copy_from_Mat(const cv::Mat& image, const cv::Size& size)
+void YOLO26::copy_from_Mat(const cv::Mat& image, const cv::Size& size)
 {
     auto& inputTensor = tensors[inputBlobName];
     cv::Mat nchw;
@@ -439,7 +494,7 @@ void YOLOv8::copy_from_Mat(const cv::Mat& image, const cv::Size& size)
     }
 }
 
-void YOLOv8::infer()
+void YOLO26::infer()
 {
     // 1) Set tensor addresses (name-based)
     for (const auto& name : inputNames) {
@@ -489,21 +544,48 @@ void YOLOv8::infer()
 }
 
 
-usv_interfaces::msg::ZbboxArray YOLOv8::postprocess()
+usv_interfaces::msg::ZbboxArray YOLO26::postprocess()
 {
     usv_interfaces::msg::ZbboxArray arr;
+
+    auto& dw       = this->pparam.dw;
+    auto& dh       = this->pparam.dh;
+    auto& width    = this->pparam.width;
+    auto& height   = this->pparam.height;
+    auto& ratio    = this->pparam.ratio;
+
+    if (unifiedDetectionOutput) {
+        const auto& output = tensors[detectionsName];
+        const int maxDetections = output.dims.d[1];
+        const float* detections = static_cast<const float*>(output.hostBuffer);
+
+        for (int i = 0; i < maxDetections; ++i) {
+            const float* detection = detections + i * 6;
+            const float probability = detection[4];
+            if (probability < this->threshold) {
+                continue;
+            }
+
+            usv_interfaces::msg::Zbbox object;
+            object.uuid = sl::generate_unique_id();
+            object.prob = probability;
+            object.label = static_cast<int>(std::round(detection[5]));
+            object.x0 = clamp((detection[0] - dw) * ratio, 0.f, width);
+            object.y0 = clamp((detection[1] - dh) * ratio, 0.f, height);
+            object.x1 = clamp((detection[2] - dw) * ratio, 0.f, width);
+            object.y1 = clamp((detection[3] - dh) * ratio, 0.f, height);
+            arr.boxes.push_back(object);
+        }
+
+        RCLCPP_DEBUG(this->logger, "YOLO26 detected objects: %zu", arr.boxes.size());
+        return arr;
+    }
 
     // Access output tensors by name
     int*   num_dets = static_cast<int*>(tensors[numDetectionsName].hostBuffer);
     float* boxes    = static_cast<float*>(tensors[boxesName].hostBuffer);
     float* scores   = static_cast<float*>(tensors[scoresName].hostBuffer);
     int*   labels   = static_cast<int*>(tensors[classesName].hostBuffer);
-    
-    auto& dw       = this->pparam.dw;
-    auto& dh       = this->pparam.dh;
-    auto& width    = this->pparam.width;
-    auto& height   = this->pparam.height;
-    auto& ratio    = this->pparam.ratio;
 
     RCLCPP_DEBUG(this->logger, "num_dets: %d", num_dets[0]);
     RCLCPP_DEBUG(this->logger, "threshold: %f", this->threshold);
@@ -547,7 +629,7 @@ usv_interfaces::msg::ZbboxArray YOLOv8::postprocess()
     return arr;
 }
 
-void YOLOv8::draw_objects(
+void YOLO26::draw_objects(
     const cv::Mat& image,
     cv::Mat& res,
     const usv_interfaces::msg::ZbboxArray& objs,
@@ -559,19 +641,22 @@ void YOLOv8::draw_objects(
 
     // Iterate over each detection in the ZbboxArray message
     for (const auto& obj : objs.boxes) {
-        // Ensure label index is within bounds
-        if (obj.label >= CLASS_NAMES.size() || obj.label >= COLORS.size()) {
-            RCLCPP_WARN(rclcpp::get_logger("YOLOv8"),
+        if (obj.label < 0) {
+            RCLCPP_WARN(rclcpp::get_logger("YOLO26"),
                 "Invalid label index: %d. Skipping drawing.", obj.label);
             continue;
         }
 
-        // Create color from the predefined color array
-        cv::Scalar color(
-            COLORS[obj.label][0],
-            COLORS[obj.label][1],
-            COLORS[obj.label][2]
-        );
+        const auto label_index = static_cast<size_t>(obj.label);
+        const std::string class_name = label_index < CLASS_NAMES.size()
+            ? CLASS_NAMES[label_index]
+            : "class_" + std::to_string(obj.label);
+        const cv::Scalar color = label_index < COLORS.size()
+            ? cv::Scalar(
+                COLORS[label_index][0],
+                COLORS[label_index][1],
+                COLORS[label_index][2])
+            : cv::Scalar(255, 255, 255);
 
         // Create rectangle using x0, y0, x1, and y1.
         int rect_x = static_cast<int>(obj.x0);
@@ -586,7 +671,7 @@ void YOLOv8::draw_objects(
         // Prepare label text with confidence score
 
         std::string label_text = cv::format("%s %d%%",
-            CLASS_NAMES[obj.label].c_str(), (int)(obj.prob*100.0));
+            class_name.c_str(), (int)(obj.prob*100.0));
 
         // Calculate text size and position
         int baseline = 0;
@@ -610,4 +695,4 @@ void YOLOv8::draw_objects(
 }
 
 
-#endif  // JETSON_DETECT_YOLOV8_HPP
+#endif  // JETSON_DETECT_YOLO26_HPP

@@ -158,16 +158,18 @@ private:
 
 static void map_yolo_label(int label, usv_interfaces::msg::Object& obj) {
     switch (label) {
-        case 0:  obj.color = 4; obj.type = "round";  break; // black
-        case 1:  obj.color = 2; obj.type = "round";  break; // blue
-        case 2:  obj.color = 4; obj.type = "marker"; break; // course marker
-        case 3:  obj.color = 1; obj.type = "round";  break; // green
-        case 4:  obj.color = 0; obj.type = "marker"; break; // red marker
-        case 5:  obj.color = 0; obj.type = "round";  break; // red
-        case 6:  obj.color = 1; obj.type = "marker"; break; // green marker
-        case 7:  obj.color = 3; obj.type = "round";  break; // yellow
+        case 0: obj.color = 4; obj.type = "round"; break; // black_buoy
+        case 1: obj.color = 2; obj.type = "round"; break; // blue_buoy
+        case 2: obj.color = 4; obj.type = "marker"; break; // course_marker
+        case 3: obj.color = 1; obj.type = "round"; break; // green_buoy
+        case 4: obj.color = 1; obj.type = "marker"; break; // green_pole
+        case 5: obj.color = 0; obj.type = "round"; break; // red_buoy
+        case 6: obj.color = 0; obj.type = "marker"; break; // red_pole
+        case 7: obj.color = 3; obj.type = "round"; break; // yellow_buoy
         default: obj.color = -1; obj.type = "ignore"; break;
     }
+
+    
 }
 
 static void map_shapes_label(int label, usv_interfaces::msg::Object& obj) {

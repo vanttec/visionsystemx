@@ -1,0 +1,46 @@
+yolo:
+  ros__parameters:
+    # Add one path per TensorRT model. The first model is the required base model.
+    # To add another model, append its .engine path, for example:
+    #   - /home/asv/vanttec_usv/src/visionsystemx/data/SECONDARY.engine
+    engine_paths:
+      - /home/asv/vanttec_usv/src/visionsystemx/data/CORE.engine
+
+    # Add one name per engine, in the same order as engine_paths.
+    # Names are used only for logs and performance measurements.
+    # Example for a second model:
+    #   - secondary
+    model_names:
+      - core
+
+    # Add one label offset per engine, in the same order.
+    # CORE has 8 classes (labels 0-7), so a second model can use offset 8.
+    # Its local labels 0, 1, 2... then become global labels 8, 9, 10...
+    # Example for a second model:
+    #   - 8
+    label_offsets:
+      - 0
+
+    # Add one confidence threshold per engine, in the same order.
+    # Example for a second model:
+    #   - 0.25
+    model_thresholds:
+      - 0.25
+
+    # Global class catalog used by the annotated image.
+    # The position in this list is the global label; CORE occupies positions 0-7.
+    # For a model with offset 8, append its classes starting at position 8 and
+    # preserve the exact class order stored in that model.
+    class_names:
+      - black_buoy
+      - blue_buoy
+      - course_marker
+      - green_buoy
+      - green_pole
+      - red_buoy
+      - red_pole
+      - yellow_buoy
+
+    # true: stop startup if any configured engine cannot be loaded.
+    # false: CORE is still required, but unavailable additional models are skipped.
+    strict_model_loading: true
