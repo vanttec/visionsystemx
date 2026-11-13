@@ -1,0 +1,65 @@
+# LiDAR-camera frustum association config.
+# Replaces ZED SDK ingestCustomBoxObjects + retrieveObjects with
+# VLP16 range + monocular bearing. See scripts/lidar_bbox_range_node.py.
+#
+# Calibrated for the Logitech C920 (1280x720, focus locked at infinity by
+# vision.launch.py) + VLP16 on the shared mount. Redo both if either sensor
+# moves on the mount. At runtime the node prefers the live CameraInfo topic
+# (use_camera_info: true); YAML intrinsics are the fallback.
+
+lidar:
+  lidar_topic: /velodyne_points
+  frame_id: velodyne
+  min_range: 0.5          # [m] below this the VLP16 is unreliable / occluded
+  max_range: 60.0         # [m] beyond this VLP16 returns are too sparse
+  min_hits: 3             # min projected points inside eroded bbox to accept range
+  accumulation_scans: 3   # ring buffer of recent scans concatenated (no ego-motion comp in MVP)
+  cloud_timeout: 1.0      # [s] bbox with older cloud -> publish "ignore"
+
+camera:
+  image_topic: /bebblebrox/video          # only used for debug overlay
+  camera_info_topic: /bebblebrox/video/camera_info
+  debug_topic: /bebblebrox/debug/frustum
+  use_camera_info: true   # prefer live CameraInfo K/D over YAML fallback
+  # Fallback intrinsics, same as config/webcam_calibration.yaml:
+  camera_matrix: [931.4584, 0.0, 625.35708,
+                  0.0, 939.06709, 356.7604,
+                  0.0, 0.0, 1.0]
+  dist_coeffs: [0.114198, -0.17903, -0.002494, -0.005067, 0.0]
+  image_width: 1280
+  image_height: 720
+
+topics:
+  yolo_sub_topic: /yolo/detections
+  shapes_sub_topic: /shapes/detections
+  objects_yolo_topic: /bebblebrox/objects/yolo
+  objects_shapes_topic: /bebblebrox/objects/shapes
+
+bbox:
+  erosion_ratio: 0.10     # shrink each bbox side by 10% to reject background
+  pad_to: 10              # pad ObjectList to N entries like beeblebrox objs2markers
+  mad_scale: 2.0          # outlier rejection: |z - median| > mad_scale * MAD
+
+sync:
+  slop: 0.10              # [s] informational; node uses latest-cloud cache, not exact sync
+
+# T_lidar_to_cam from collect_calib_pairs.py + calibrate_lidar_camera.py
+# (17 board pairs, 15 inliers, 1.5 px mean reprojection). LiDAR sits
+# ~11 cm above and ~10 cm behind the camera, matching the tape measure.
+extrinsic_matrix:
+- - 0.04149610525970704
+  - -0.9988434878486236
+  - 0.024284975410137966
+  - -0.008350651825880502
+- - -0.00728092707407102
+  - -0.024607566794112745
+  - -0.9996706736507852
+  - -0.11424739370152018
+- - 0.9991121365238322
+  - 0.04130562236389873
+  - -0.008293624775310648
+  - -0.09919579723969212
+- - 0.0
+  - 0.0
+  - 0.0
+  - 1.0

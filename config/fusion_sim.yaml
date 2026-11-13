@@ -1,0 +1,63 @@
+# SIM profile for lidar_bbox_range_node (Gazebo vtec_s4, NOT for the real boat).
+# Geometry derived exactly from image_files/sim_ws/.../vtec_s4/model.sdf:
+#   gpu_lidar pose (base_link): 0.2 0.0 0.55, identity rotation
+#   camera    pose (base_link): 0.55 0.0 0.25, identity rotation
+#   camera 1920x1080, horizontal_fov 1.047 rad -> fx = fy = 960/tan(0.5235)
+# Node cam frame is Z-forward (OpenCV); Gazebo frames are X-forward, so the
+# axis swap is baked into extrinsic_matrix (assumes Gazebo Y+ = left;
+# the A/B validation test confirms the sign empirically).
+
+lidar:
+  lidar_topic: /velodyne_points
+  frame_id: velodyne
+  min_range: 0.5
+  max_range: 60.0
+  min_hits: 3
+  accumulation_scans: 3
+  cloud_timeout: 1.0
+
+camera:
+  image_topic: /bebblebrox/video
+  camera_info_topic: /bebblebrox/video/camera_info
+  debug_topic: /bebblebrox/debug/frustum
+  use_camera_info: true
+  camera_matrix: [1662.77, 0.0, 960.0,
+                  0.0, 1662.77, 540.0,
+                  0.0, 0.0, 1.0]
+  dist_coeffs: [0.0, 0.0, 0.0, 0.0, 0.0]
+  image_width: 1920
+  image_height: 1080
+
+topics:
+  yolo_sub_topic: /yolo/detections
+  shapes_sub_topic: /shapes/detections
+  objects_yolo_topic: /bebblebrox/objects/yolo
+  objects_shapes_topic: /bebblebrox/objects/shapes
+
+bbox:
+  erosion_ratio: 0.10
+  pad_to: 10
+  mad_scale: 2.0
+
+sync:
+  slop: 0.10
+
+# lidar -> node-cam (Z-forward): swap [[0,-1,0],[0,0,-1],[1,0,0]] composed
+# with translation t = lidar_pos - cam_pos = (-0.35, 0, 0.30).
+extrinsic_matrix:
+- - 0.0
+  - -1.0
+  - 0.0
+  - 0.0
+- - 0.0
+  - 0.0
+  - -1.0
+  - -0.30
+- - 1.0
+  - 0.0
+  - 0.0
+  - -0.35
+- - 0.0
+  - 0.0
+  - 0.0
+  - 1.0

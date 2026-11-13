@@ -1,0 +1,59 @@
+# BAG profile for lidar_bbox_range_node (real boat, ZED2i era).
+# K/D taken from recorded /bebblebrox/camera_info (1280x720, fx=522.71,
+# rational_polynomial zeros). Extrinsics are the boat's ZED-mount values
+# from src/lidar/translation.cpp (same era - verify via hit counts).
+# Topics match cam_lidar_odom_can_bag recording.
+
+lidar:
+  lidar_topic: /velodyne_points
+  frame_id: velodyne
+  min_range: 0.5
+  max_range: 60.0
+  min_hits: 3
+  accumulation_scans: 3
+  cloud_timeout: 2.0      # bag replay through bridge can jitter; generous
+
+camera:
+  image_topic: /bebblebrox/video
+  camera_info_topic: /bebblebrox/camera_info
+  debug_topic: /bebblebrox/debug/frustum
+  use_camera_info: true   # bag HAS camera_info; live K wins over YAML
+  camera_matrix: [522.71, 0.0, 656.02,
+                  0.0, 522.71, 366.28,
+                  0.0, 0.0, 1.0]
+  dist_coeffs: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+  image_width: 1280
+  image_height: 720
+
+topics:
+  yolo_sub_topic: /yolo/detections
+  shapes_sub_topic: /shapes/detections
+  objects_yolo_topic: /bebblebrox/objects/yolo
+  objects_shapes_topic: /bebblebrox/objects/shapes
+
+bbox:
+  erosion_ratio: 0.10
+  pad_to: 10
+  mad_scale: 2.0
+
+sync:
+  slop: 0.10
+
+# ZED-mount extrinsics (same as fusion.yaml placeholder / translation.cpp).
+extrinsic_matrix:
+- - 0.004925697387197947
+  - -0.9999744448207916
+  - -0.0051814293973278525
+  - 0.06684500162782157
+- - 0.01300526353504694
+  - 0.00524511394559779
+  - -0.9999016711157561
+  - -0.1345418740635012
+- - 0.99990329563695
+  - 0.004857827194069242
+  - 0.013030767027264023
+  - -0.12626667685463364
+- - 0.0
+  - 0.0
+  - 0.0
+  - 1.0
