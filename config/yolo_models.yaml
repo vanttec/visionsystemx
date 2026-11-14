@@ -2,9 +2,9 @@ yolo:
   ros__parameters:
     # Add one path per TensorRT model. The first model is the required base model.
     # To add another model, append its .engine path, for example:
-    #   - /home/asv/vanttec_usv/src/visionsystemx/data/SECONDARY.engine
+    #   - /home/vanttec/vanttec_usv/src/visionsystemx/data/SECONDARY.engine
     engine_paths:
-      - /home/asv/vanttec_usv/src/visionsystemx/data/CORE.engine
+      - /home/vanttec/vanttec_usv/src/visionsystemx/data/CORE.engine
 
     # Add one name per engine, in the same order as engine_paths.
     # Names are used only for logs and performance measurements.

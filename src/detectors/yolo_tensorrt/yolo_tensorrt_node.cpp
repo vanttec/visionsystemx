@@ -164,7 +164,7 @@ private:
 public:
     YoloDetector() : Node("yolo")
     {
-        this->declare_parameter("engine_path", "/home/asv/vanttec_usv/src/visionsystemx/data/CORE.engine");
+        this->declare_parameter("engine_path", "/home/vanttec/vanttec_usv/src/visionsystemx/data/CORE.engine");
         engine_path = this->get_parameter("engine_path").as_string();
 
         this->declare_parameter("video_topic", "/bebblebrox/video");
