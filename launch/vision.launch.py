@@ -52,7 +52,7 @@ def generate_launch_description():
             {'engine_path': PathJoinSubstitution([
                 FindPackageShare('visionsystemx'),
                 'data',
-                'SARASOTA.engine',
+                'CORE.engine',
             ])},
             {'video_topic': '/bebblebrox/video'},
             {'output_topic': '/yolo/detections'},
