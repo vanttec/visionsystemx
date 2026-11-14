@@ -104,6 +104,8 @@ def generate_launch_description():
             {'camera_info_url': 'file:///home/vanttec/vanttec_usv/src/visionsystemx/config/webcam_calibration.yaml'},
             {'image_width': 1280},
             {'image_height': 720},
+            # usb_cam defaults to 50, too dark on the C920 (its own default is 128)
+            {'brightness': 128},
         ],
         remappings=[
             ('image_raw', '/bebblebrox/video'),
