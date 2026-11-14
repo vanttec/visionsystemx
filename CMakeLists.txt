@@ -10,6 +10,23 @@ if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   add_compile_options(-Wall -Wextra -Wpedantic)
 endif()
 
+# ROS Humble's cv_bridge on the Jetson uses distribution OpenCV libraries.
+# Prefer the distribution CMake package there and avoid additionally loading
+# the custom OpenCV 4.12 build installed under /usr/local.
+option(VISIONSYSTEMX_USE_SYSTEM_OPENCV
+  "Use the Jetson system OpenCV that matches ROS cv_bridge" ON)
+set(VISIONSYSTEMX_SYSTEM_OPENCV_DIR "/usr/lib/cmake/opencv4")
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64" AND VISIONSYSTEMX_USE_SYSTEM_OPENCV)
+  if(EXISTS "${VISIONSYSTEMX_SYSTEM_OPENCV_DIR}/OpenCVConfig.cmake")
+    set(OpenCV_DIR "${VISIONSYSTEMX_SYSTEM_OPENCV_DIR}"
+      CACHE PATH "OpenCV package used by VisionSystemX" FORCE)
+    message(STATUS "VisionSystemX: using system OpenCV from ${OpenCV_DIR}")
+  else()
+    message(FATAL_ERROR
+      "System OpenCV config not found at ${VISIONSYSTEMX_SYSTEM_OPENCV_DIR}")
+  endif()
+endif()
+
 # find dependencies
 find_package(ament_cmake REQUIRED)
 find_package(ament_cmake_python REQUIRED)
